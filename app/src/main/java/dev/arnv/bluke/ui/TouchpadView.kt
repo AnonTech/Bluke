@@ -9,6 +9,8 @@ import android.os.Vibrator
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,12 +32,14 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.arnv.bluke.bluetooth.BluetoothKeyboardManager
@@ -463,7 +467,6 @@ fun TouchpadView(
 
 @Composable
 fun NumpadLedGrid(onKeyPress: (Int, Boolean) -> Unit) {
-    // Asus Vivobook numpad layout
     val getKeyCode: (String) -> Int = { char ->
         when (char) {
             "1" -> 0x1E
@@ -478,7 +481,7 @@ fun NumpadLedGrid(onKeyPress: (Int, Boolean) -> Unit) {
             "0" -> 0x27
             "." -> 0x37
             "/" -> 0x38
-            "*" -> 0x25 // Emulate 8
+            "*" -> 0x25
             "-" -> 0x2D
             "+" -> 0x2E
             "⌫" -> 0x2A
@@ -607,7 +610,6 @@ fun NumpadLedGrid(onKeyPress: (Int, Boolean) -> Unit) {
             // 3 horizontal lines (1/4, 2/4, 3/4)
             for (i in 1..3) {
                 val y = size.height * (i / 4f)
-                // Top horizontal line doesn't go through the Backspace key
                 val endX = if (i == 1) size.width * (4f / 5f) else size.width
                 drawLine(
                     color = lineColor,
@@ -644,8 +646,26 @@ fun TouchGestureLayer(
     val pointerDownInfo = remember { mutableMapOf<PointerId, Pair<Long, Offset>>() }
     var maxPointersInTap by remember { mutableIntStateOf(0) }
 
-    // Rate limiting to prevent Bluetooth L2CAP packet flooding (queue bloat / latency)
+    // Rate limiting to prevent Bluetooth L2CAP packet flooding
     var lastReportTime by remember { mutableStateOf(0L) }
+
+    // Visual pointer (touchpad thumb) tracking states
+    var isTouchActive by remember { mutableStateOf(false) }
+    var touchX by remember { mutableStateOf(0f) }
+    var touchY by remember { mutableStateOf(0f) }
+    var touchCount by remember { mutableStateOf(0) }
+
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val thumbActiveAlpha by animateFloatAsState(
+        targetValue = if (isTouchActive && !showNumpadLed) 0.85f else 0f,
+        animationSpec = spring(stiffness = Spring.StiffnessMedium),
+        label = "thumbAlpha"
+    )
+    val thumbScale by animateFloatAsState(
+        targetValue = if (touchCount >= 2) 0.78f else (if (isTouchActive) 0.88f else 1.0f),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessHigh),
+        label = "thumbScale"
+    )
 
     Box(
         modifier = Modifier
@@ -656,13 +676,22 @@ fun TouchGestureLayer(
                         val event = awaitPointerEvent()
                         val changes = event.changes
 
-                        // Skip pointer processing for primary touchpad movements if user is interacting with LED keypad
                         if (showNumpadLed) {
+                            isTouchActive = false
+                            touchCount = 0
                             continue
                         }
 
                         // Determine active pointers
                         val downCount = changes.count { it.pressed }
+                        touchCount = downCount
+                        isTouchActive = downCount > 0
+                        if (downCount > 0) {
+                            val firstPressed = changes.first { it.pressed }
+                            touchX = firstPressed.position.x
+                            touchY = firstPressed.position.y
+                        }
+
                         if (downCount > maxPointersInTap) {
                             maxPointersInTap = downCount
                         }
@@ -679,7 +708,6 @@ fun TouchGestureLayer(
                             accumulatedScrollY = 0f
                             val pointer = changes.first { it.pressed }
                             
-                            // Check if this pointer is starting or changing
                             if (lastActivePointerId != pointer.id || !pointer.previousPressed) {
                                 lastActivePointerId = pointer.id
                                 accumulatedX = 0f
@@ -707,19 +735,17 @@ fun TouchGestureLayer(
                                 lastPointY = pointer.position.y
                             }
 
-                            // If single click triggers at the bottom action areas:
                             if (!pointer.previousPressed) {
-                                val touchY = pointer.position.y
-                                val touchX = pointer.position.x
+                                val touchYVal = pointer.position.y
+                                val touchXVal = pointer.position.x
                                 val height = size.height
                                 val width = size.width
 
-                                // Divide bottom 18% area for L/M/R button emulation
-                                if (touchY > height * 0.82f) {
+                                if (touchYVal > height * 0.82f) {
                                     triggerVibration(25)
                                     when (buttonMode) {
                                         TrackpadButtonMode.TWO_BUTTONS -> {
-                                            if (touchX < width / 2f) {
+                                            if (touchXVal < width / 2f) {
                                                 btManager.sendMouseReport(1, 0, 0, 0)
                                             } else {
                                                 btManager.sendMouseReport(2, 0, 0, 0)
@@ -727,8 +753,8 @@ fun TouchGestureLayer(
                                         }
                                         TrackpadButtonMode.THREE_BUTTONS -> {
                                             when {
-                                                touchX < width * 0.35f -> btManager.sendMouseReport(1, 0, 0, 0)
-                                                touchX < width * 0.65f -> btManager.sendMouseReport(4, 0, 0, 0)
+                                                touchXVal < width * 0.35f -> btManager.sendMouseReport(1, 0, 0, 0)
+                                                touchXVal < width * 0.65f -> btManager.sendMouseReport(4, 0, 0, 0)
                                                 else -> btManager.sendMouseReport(2, 0, 0, 0)
                                             }
                                         }
@@ -736,14 +762,12 @@ fun TouchGestureLayer(
                                             btManager.sendMouseReport(1, 0, 0, 0)
                                         }
                                     }
-                                    // Release click bit quickly after touch registers
                                     btManager.sendMouseReport(0, 0, 0, 0)
-                                    pointerDownInfo.remove(pointer.id) // Consume tap so it doesn't trigger on release
+                                    pointerDownInfo.remove(pointer.id)
                                 }
                             }
 
                         } else if (downCount == 2) {
-                            // Two-Finger scroll gesturing
                             val pressedList = changes.filter { it.pressed }
                             if (pressedList.size == 2) {
                                 val currentYAverage = (pressedList[0].position.y + pressedList[1].position.y) / 2f
@@ -757,7 +781,6 @@ fun TouchGestureLayer(
                                     if (now - lastReportTime >= 10L) {
                                         val sendScroll = accumulatedScrollY.roundToInt().coerceIn(-127, 127)
                                         if (sendScroll != 0) {
-                                            // Send vertical scroll HID report
                                             btManager.sendMouseReport(0, 0, 0, sendScroll.toByte())
                                             accumulatedScrollY -= sendScroll
                                             lastReportTime = now
@@ -767,11 +790,9 @@ fun TouchGestureLayer(
                                 }
                             }
                         } else {
-                            // No pointers down, clear helper tracking
                             isTwoFingerActive = false
                             lastActivePointerId = null
                             
-                            // Flush any remaining accumulated movements when touch lifts
                             val sendX = accumulatedX.roundToInt().coerceIn(-127, 127)
                             val sendY = accumulatedY.roundToInt().coerceIn(-127, 127)
                             if (sendX != 0 || sendY != 0) {
@@ -796,21 +817,16 @@ fun TouchGestureLayer(
                                     val dy = change.position.y - downInfo.second.y
                                     val distanceSq = dx * dx + dy * dy
                                     
-                                    // If touch released rapidly (< 250ms) and travelled very little
                                     if (duration < 250L && distanceSq < 40f) {
-                                        // Wait until all fingers are up to determine final tap type
                                         if (downCount == 0) {
                                             triggerVibration(20)
                                             if (maxPointersInTap >= 3) {
-                                                // 3+ finger tap releases as a Middle Click
                                                 btManager.sendMouseReport(4, 0, 0, 0)
                                                 btManager.sendMouseReport(0, 0, 0, 0)
                                             } else if (maxPointersInTap == 2) {
-                                                // 2 finger tap releases as a Right Click
                                                 btManager.sendMouseReport(2, 0, 0, 0)
                                                 btManager.sendMouseReport(0, 0, 0, 0)
                                             } else {
-                                                // 1 finger rapid tap releases as standard Left Click
                                                 btManager.sendMouseReport(1, 0, 0, 0)
                                                 btManager.sendMouseReport(0, 0, 0, 0)
                                             }
@@ -821,7 +837,7 @@ fun TouchGestureLayer(
                         }
 
                         if (downCount == 0) {
-                            maxPointersInTap = 0 // reset for next gesture
+                            maxPointersInTap = 0
                         }
                     }
                 }
@@ -832,7 +848,6 @@ fun TouchGestureLayer(
             modifier = Modifier.fillMaxSize()
         ) {
             if (buttonMode != TrackpadButtonMode.CLICKPAD) {
-                // Background overlay for physical buttons zone at bottom center
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -848,7 +863,6 @@ fun TouchGestureLayer(
                                         .fillMaxHeight(),
                                     contentAlignment = Alignment.Center
                                 ) {}
-                                // Center boundary separator line
                                 Box(
                                     modifier = Modifier
                                         .width(1.dp)
@@ -900,6 +914,49 @@ fun TouchGestureLayer(
                         else -> {}
                     }
                 }
+            }
+        }
+
+        // Draw touchpad thumb at touch coordinate (Themed slate/gradient style)
+        val thumbSize = 28.dp
+        if (thumbActiveAlpha > 0.01f) {
+            Box(
+                modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            x = (touchX - with(density) { (thumbSize / 2).toPx() }).roundToInt(),
+                            y = (touchY - with(density) { (thumbSize / 2).toPx() }).roundToInt()
+                        )
+                    }
+                    .size(thumbSize)
+                    .graphicsLayer {
+                        scaleX = thumbScale
+                        scaleY = thumbScale
+                        alpha = thumbActiveAlpha
+                    }
+                    .shadow(
+                        elevation = 4.dp,
+                        shape = CircleShape,
+                        clip = false,
+                        ambientColor = Color.Black,
+                        spotColor = Color.Black.copy(alpha = 0.5f)
+                    )
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(Color(0xFF38383B), Color(0xFF232325))
+                        ),
+                        shape = CircleShape
+                    )
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                // Subtle inner core
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.25f))
+                )
             }
         }
     }
