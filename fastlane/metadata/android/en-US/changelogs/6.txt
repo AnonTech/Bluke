@@ -1,0 +1,2 @@
+- New Gamepad 🎮 feature is enabled by default
+- Optimized Dependencies, app is now more less in size
