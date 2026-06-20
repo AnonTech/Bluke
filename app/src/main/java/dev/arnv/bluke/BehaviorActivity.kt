@@ -206,7 +206,7 @@ class BehaviorActivity : ComponentActivity() {
                             "gamepad" to "Gamepad"
                         )
                         var activeModesSet by remember {
-                            mutableStateOf(sharedPrefs.getStringSet("cycle_connection_modes", setOf("keyboard", "touchpad")) ?: emptySet())
+                            mutableStateOf(sharedPrefs.getStringSet("cycle_connection_modes", setOf("keyboard", "touchpad", "gamepad")) ?: emptySet())
                         }
                         val modesDescription = if (activeModesSet.size == 3) {
                             "All input modes active in cycle"

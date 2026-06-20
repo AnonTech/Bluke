@@ -114,7 +114,7 @@ fun HomeScreen(
                         2 -> "gamepad"
                         else -> "keyboard"
                     }
-                    sharedPrefs.getStringSet("cycle_connection_modes", setOf("keyboard", "touchpad"))?.contains(modeStr) == true
+                    sharedPrefs.getStringSet("cycle_connection_modes", setOf("keyboard", "touchpad", "gamepad"))?.contains(modeStr) == true
                 }.ifEmpty { listOf(0) }
                 val savedLaunchMode = sharedPrefs.getInt("launch_mode", 0)
                 launchMode = if (enabledModes.contains(savedLaunchMode)) savedLaunchMode else enabledModes.first()
@@ -407,7 +407,7 @@ fun HomeScreen(
                                                     2 -> "gamepad"
                                                     else -> "keyboard"
                                                 }
-                                                sharedPrefs.getStringSet("cycle_connection_modes", setOf("keyboard", "touchpad"))?.contains(modeStr) == true
+                                                sharedPrefs.getStringSet("cycle_connection_modes", setOf("keyboard", "touchpad", "gamepad"))?.contains(modeStr) == true
                                             }.ifEmpty { listOf(0) }
                                             val currentIndexInEnabled = enabledModes.indexOf(launchMode)
                                             val nextIndex = (currentIndexInEnabled + 1) % enabledModes.size
@@ -1226,7 +1226,7 @@ fun HomeScreen(
                                             2 -> "gamepad"
                                             else -> "keyboard"
                                         }
-                                        sharedPrefs.getStringSet("cycle_connection_modes", setOf("keyboard", "touchpad"))?.contains(modeStr) == true
+                                        sharedPrefs.getStringSet("cycle_connection_modes", setOf("keyboard", "touchpad", "gamepad"))?.contains(modeStr) == true
                                     }.ifEmpty { listOf(0) }
                                     val currentIndex = enabledModes.indexOf(launchMode).coerceAtLeast(0)
                                     val nextMode = enabledModes[(currentIndex + 1) % enabledModes.size]
