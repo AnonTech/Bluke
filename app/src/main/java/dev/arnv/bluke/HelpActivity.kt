@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.arnv.bluke.ui.theme.MyApplicationTheme
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 
 class HelpActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
@@ -45,7 +46,10 @@ class HelpActivity : ComponentActivity() {
                     // Do nothing until timer completes
                 }
                 
+                val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
+
                 Scaffold(
+                    modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
                     topBar = {
                         LargeTopAppBar(
                             title = { Text("Help & Guide") },
@@ -59,7 +63,8 @@ class HelpActivity : ComponentActivity() {
                             colors = TopAppBarDefaults.largeTopAppBarColors(
                                 containerColor = MaterialTheme.colorScheme.surface,
                                 titleContentColor = MaterialTheme.colorScheme.onSurface
-                            )
+                            ),
+                            scrollBehavior = scrollBehavior
                         )
                     },
                     bottomBar = {

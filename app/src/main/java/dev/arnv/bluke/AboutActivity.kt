@@ -30,6 +30,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -66,7 +67,10 @@ class AboutActivity : ComponentActivity() {
                 val logoShape = getCookieShape(7)
                 val developerShape = getCookieShape(7)
 
+                val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
+
                 Scaffold(
+                    modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
                     topBar = {
                         LargeTopAppBar(
                             title = { Text("About") },
@@ -78,7 +82,8 @@ class AboutActivity : ComponentActivity() {
                             colors = TopAppBarDefaults.largeTopAppBarColors(
                                 containerColor = MaterialTheme.colorScheme.surface,
                                 titleContentColor = MaterialTheme.colorScheme.onSurface
-                            )
+                            ),
+                            scrollBehavior = scrollBehavior
                         )
                     }
                 ) { innerPadding ->
