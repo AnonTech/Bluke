@@ -92,6 +92,9 @@ fun HomeScreen(
     var launchMode by rememberSaveable { mutableStateOf(sharedPrefs.getInt("launch_mode", 0)) }
     // Hands typing over to the user's own IME (Gboard, Samsung Keyboard, ...) instead of Bluke's keycaps.
     var useSystemIme by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("use_system_ime", false)) }
+    // The keyboard layout configured on the *host*, which decides how our scancodes are decoded.
+    var hostLayoutId by remember { mutableStateOf(sharedPrefs.getString("host_layout", HostLayouts.DEFAULT.id)) }
+    var unicodeEntryModeId by remember { mutableStateOf(sharedPrefs.getString("unicode_entry_mode", "off")) }
 
     // Mute state
     var isMuted by rememberSaveable { mutableStateOf(!sharedPrefs.getBoolean("key_sound_enabled", true)) }
@@ -110,6 +113,8 @@ fun HomeScreen(
                 keySensitivity = sharedPrefs.getFloat("key_sensitivity", 6f)
                 lockSyncMode = sharedPrefs.getString("lock_sync_mode", "host") ?: "host"
                 useSystemIme = sharedPrefs.getBoolean("use_system_ime", false)
+                hostLayoutId = sharedPrefs.getString("host_layout", HostLayouts.DEFAULT.id)
+                unicodeEntryModeId = sharedPrefs.getString("unicode_entry_mode", "off")
                 val enabledModes = listOf(0, 1, 2).filter { mode ->
                     val modeStr = when (mode) {
                         0 -> "keyboard"
@@ -808,6 +813,8 @@ fun HomeScreen(
                                     palette = Colorways.PALETTES[selectedLayoutType]
                                         ?: Colorways.PALETTES[KeyboardLayoutType.OBLIVION_75]!!,
                                     isConnected = isConnected,
+                                    hostLayout = HostLayouts.byId(hostLayoutId),
+                                    unicodeMode = UnicodeEntry.UnicodeEntryMode.byId(unicodeEntryModeId),
                                     onStroke = { code, press -> handleLocalKeyPress(code, press) },
                                     onExitImeMode = {
                                         useSystemIme = false

@@ -1,5 +1,7 @@
 package dev.arnv.bluke.ui
 
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,6 +23,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
@@ -42,9 +45,11 @@ import kotlinx.coroutines.delay
  */
 data class ImeDiff(
     val backspaces: Int,
-    val strokes: List<HidCharMap.Stroke>,
-    /** Characters that had no US-layout equivalent and were dropped, for user feedback. */
-    val droppedChars: String
+    val events: List<UnicodeEntry.KeyEvent>,
+    /** Characters neither the host layout nor Unicode entry could produce, for user feedback. */
+    val droppedChars: String,
+    /** The portion of the target text that actually reached the host. */
+    val sentText: String
 )
 
 /**
@@ -53,25 +58,32 @@ data class ImeDiff(
  *
  * The IME is free to rewrite text it already gave us - that is exactly what autocorrect and word
  * suggestions do - so a plain append is not enough. We keep the common prefix, backspace away the
- * rest, and retype the tail.
+ * rest, and retype the tail against the user's declared host layout.
  */
-fun computeImeDiff(sent: String, target: String): ImeDiff {
+fun computeImeDiff(
+    sent: String,
+    target: String,
+    layout: HostLayouts.HostLayout = HostLayouts.DEFAULT,
+    unicodeMode: UnicodeEntry.UnicodeEntryMode = UnicodeEntry.UnicodeEntryMode.OFF
+): ImeDiff {
     var prefix = 0
     while (prefix < sent.length && prefix < target.length && sent[prefix] == target[prefix]) {
         prefix++
     }
     val backspaces = sent.length - prefix
-    val strokes = mutableListOf<HidCharMap.Stroke>()
-    val dropped = StringBuilder()
-    for (c in target.substring(prefix)) {
-        val expanded = HidCharMap.strokesFor(c)
-        if (expanded.isEmpty()) {
-            dropped.append(c)
-        } else {
-            strokes.addAll(expanded)
-        }
-    }
-    return ImeDiff(backspaces, strokes, dropped.toString())
+    val tail = target.substring(prefix)
+    val translation = HidCharMap.translate(tail, layout, unicodeMode)
+
+    // Characters that never reached the host must not be recorded as sent, or every later edit
+    // would mis-count its backspaces. Rebuild the mirror from what actually went out.
+    val droppedSet = translation.droppedChars.toSet()
+    val landed = tail.filter { it !in droppedSet }
+    return ImeDiff(
+        backspaces = backspaces,
+        events = translation.events,
+        droppedChars = translation.droppedChars,
+        sentText = target.substring(0, prefix) + landed
+    )
 }
 
 /**
@@ -87,9 +99,12 @@ fun computeImeDiff(sent: String, target: String): ImeDiff {
 fun ImeInputView(
     palette: KeyboardPalette,
     isConnected: Boolean,
+    hostLayout: HostLayouts.HostLayout,
+    unicodeMode: UnicodeEntry.UnicodeEntryMode,
     onStroke: (keyCode: Int, isPress: Boolean) -> Unit,
     onExitImeMode: () -> Unit
 ) {
+    val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
 
@@ -97,6 +112,8 @@ fun ImeInputView(
     // What we have already transmitted to the host, mirrored locally so edits can be reconciled.
     var sentText by remember { mutableStateOf("") }
     var droppedNotice by remember { mutableStateOf<String?>(null) }
+    // Feedback that is not about untypable characters, e.g. an empty clipboard.
+    var statusNotice by remember { mutableStateOf<String?>(null) }
 
     // A single unbounded queue drained by one long-lived consumer. Autocorrect can rewrite a whole
     // word at once, so bursts of dozens of strokes are normal; they must go out in order, and
@@ -139,23 +156,33 @@ fun ImeInputView(
             out.add(KeyboardLayouts.KEY_BACKSPACE to true)
             out.add(KeyboardLayouts.KEY_BACKSPACE to false)
         }
-        var shiftHeld = false
-        for (stroke in diff.strokes) {
-            if (stroke.shift && !shiftHeld) {
-                out.add(KeyboardLayouts.MOD_LSHIFT to true)
-                shiftHeld = true
-            } else if (!stroke.shift && shiftHeld) {
-                out.add(KeyboardLayouts.MOD_LSHIFT to false)
-                shiftHeld = false
-            }
-            out.add(stroke.keyCode to true)
-            out.add(stroke.keyCode to false)
-        }
-        if (shiftHeld) {
-            out.add(KeyboardLayouts.MOD_LSHIFT to false)
-        }
+        diff.events.forEach { out.add(it.keyCode to it.isPress) }
         queue(out)
         droppedNotice = diff.droppedChars.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * Types the phone's clipboard out over HID.
+     *
+     * This is the reliable route for text the host layout cannot express - a password with unusual
+     * symbols, a URL, a block of accented prose - because it goes through the same layout mapping
+     * but does not depend on the user's IME being able to compose it first.
+     */
+    fun sendClipboard() {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        val clip = clipboard?.primaryClip
+        val text = if (clip != null && clip.itemCount > 0) {
+            clip.getItemAt(0).coerceToText(context).toString()
+        } else ""
+        if (text.isEmpty()) {
+            statusNotice = "Clipboard is empty"
+            droppedNotice = null
+            return
+        }
+        val translation = HidCharMap.translate(text, hostLayout, unicodeMode)
+        queue(translation.events.map { it.keyCode to it.isPress })
+        statusNotice = "Sent ${text.length} characters from the clipboard"
+        droppedNotice = translation.droppedChars.takeIf { it.isNotEmpty() }
     }
 
     // Sends a bare key (Enter, arrows, ...) that has no place in the text buffer.
@@ -185,7 +212,10 @@ fun ImeInputView(
                 )
                 Text(
                     text = if (isConnected) {
-                        "Typing here is sent to the host as it is committed"
+                        "Sending as ${hostLayout.displayName}" +
+                            if (unicodeMode != UnicodeEntry.UnicodeEntryMode.OFF) {
+                                " + ${unicodeMode.displayName}"
+                            } else ""
                     } else {
                         "Not connected - nothing is being sent"
                     },
@@ -243,12 +273,11 @@ fun ImeInputView(
             BasicTextField(
                 value = fieldValue,
                 onValueChange = { newValue ->
-                    val diff = computeImeDiff(sentText, newValue.text)
-                    if (diff.backspaces > 0 || diff.strokes.isNotEmpty() || diff.droppedChars.isNotEmpty()) {
+                    val diff = computeImeDiff(sentText, newValue.text, hostLayout, unicodeMode)
+                    if (diff.backspaces > 0 || diff.events.isNotEmpty() || diff.droppedChars.isNotEmpty()) {
                         transmit(diff)
-                        // Dropped characters never reached the host, so they must not be recorded
-                        // as sent - otherwise every later edit would mis-count its backspaces.
-                        sentText = newValue.text.filter { HidCharMap.strokesFor(it).isNotEmpty() }
+                        sentText = diff.sentText
+                        statusNotice = null
                     }
                     fieldValue = newValue
                 },
@@ -281,10 +310,24 @@ fun ImeInputView(
 
         droppedNotice?.let { dropped ->
             Text(
-                text = "Skipped \"$dropped\" - no equivalent key on a US layout",
+                text = if (unicodeMode == UnicodeEntry.UnicodeEntryMode.OFF) {
+                    "Skipped \"$dropped\" - not on a ${hostLayout.displayName} keyboard. " +
+                        "Turn on Unicode entry in Behavior settings to send these."
+                } else {
+                    "Skipped \"$dropped\" - ${unicodeMode.displayName} cannot express these"
+                },
                 color = Color(0xFFFFB74D),
                 fontSize = 10.sp,
                 modifier = Modifier.testTag("ime_dropped_notice")
+            )
+        }
+
+        statusNotice?.let { status ->
+            Text(
+                text = status,
+                color = palette.alphaLegend.copy(alpha = 0.55f),
+                fontSize = 10.sp,
+                modifier = Modifier.testTag("ime_status_notice")
             )
         }
 
@@ -313,6 +356,7 @@ fun ImeInputView(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            ImeAuxKey("Send clipboard", Modifier.weight(1f)) { sendClipboard() }
             ImeAuxKey("Clear staged text", Modifier.weight(1f)) {
                 fieldValue = TextFieldValue("")
                 sentText = ""

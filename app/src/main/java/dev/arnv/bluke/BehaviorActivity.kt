@@ -25,9 +25,13 @@ import dev.arnv.bluke.ui.theme.MyApplicationTheme
 import dev.arnv.bluke.ui.KeyboardLayoutType
 import dev.arnv.bluke.sound.SwitchType
 import dev.arnv.bluke.ui.CaseColor
+import dev.arnv.bluke.ui.HostLayouts
+import dev.arnv.bluke.ui.UnicodeEntry
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.KeyboardAlt
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.ui.draw.scale
@@ -58,6 +62,14 @@ class BehaviorActivity : ComponentActivity() {
                 var keySensitivity by remember { mutableStateOf(sharedPrefs.getFloat("key_sensitivity", 6f)) }
                 var lockSyncMode by remember { mutableStateOf(sharedPrefs.getString("lock_sync_mode", "host") ?: "host") }
                 var useSystemIme by remember { mutableStateOf(sharedPrefs.getBoolean("use_system_ime", false)) }
+                var hostLayoutId by remember {
+                    mutableStateOf(sharedPrefs.getString("host_layout", HostLayouts.DEFAULT.id) ?: HostLayouts.DEFAULT.id)
+                }
+                var unicodeModeId by remember {
+                    mutableStateOf(sharedPrefs.getString("unicode_entry_mode", "off") ?: "off")
+                }
+                var showHostLayoutDialog by remember { mutableStateOf(false) }
+                var showUnicodeDialog by remember { mutableStateOf(false) }
                 
                 val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
 
@@ -152,9 +164,165 @@ class BehaviorActivity : ComponentActivity() {
                                             }
                                         )
                                     }
+                                ),
+                                SettingsItemData(
+                                    title = "Host Keyboard Layout",
+                                    subtitle = HostLayouts.byId(hostLayoutId).let { layout ->
+                                        "Sending as ${layout.displayName}. " +
+                                            if (layout.verified) {
+                                                "Must match the layout set on the computer you are controlling."
+                                            } else {
+                                                "Unverified against hardware - please report any wrong characters."
+                                            }
+                                    },
+                                    icon = { Icon(Icons.Default.Language, null, tint = MaterialTheme.colorScheme.primary) },
+                                    onClick = { showHostLayoutDialog = true }
+                                ),
+                                SettingsItemData(
+                                    title = "Unicode Entry Fallback",
+                                    subtitle = UnicodeEntry.UnicodeEntryMode.byId(unicodeModeId).let {
+                                        "${it.displayName} - ${it.description}"
+                                    },
+                                    icon = { Icon(Icons.Default.Translate, null, tint = MaterialTheme.colorScheme.primary) },
+                                    onClick = { showUnicodeDialog = true }
                                 )
                             )
                         )
+
+                        if (showHostLayoutDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showHostLayoutDialog = false },
+                                title = { Text("Host Keyboard Layout") },
+                                text = {
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        Text(
+                                            text = "Bluke sends key positions, not letters - the computer " +
+                                                "you are controlling decides what each position means. Pick the " +
+                                                "layout that machine is set to.",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(vertical = 8.dp),
+                                            color = MaterialTheme.colorScheme.outlineVariant
+                                        )
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(max = 320.dp)
+                                                .verticalScroll(rememberScrollState())
+                                        ) {
+                                            HostLayouts.ALL.forEach { layout ->
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clickable {
+                                                            hostLayoutId = layout.id
+                                                            sharedPrefs.edit().putString("host_layout", layout.id).apply()
+                                                            showHostLayoutDialog = false
+                                                        }
+                                                        .padding(vertical = 6.dp, horizontal = 8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    RadioButton(
+                                                        selected = hostLayoutId == layout.id,
+                                                        onClick = {
+                                                            hostLayoutId = layout.id
+                                                            sharedPrefs.edit().putString("host_layout", layout.id).apply()
+                                                            showHostLayoutDialog = false
+                                                        }
+                                                    )
+                                                    Spacer(modifier = Modifier.width(12.dp))
+                                                    Column {
+                                                        Text(
+                                                            text = layout.displayName,
+                                                            style = MaterialTheme.typography.bodyLarge
+                                                        )
+                                                        if (!layout.verified) {
+                                                            Text(
+                                                                text = "Unverified",
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                confirmButton = {
+                                    TextButton(onClick = { showHostLayoutDialog = false }) { Text("Close") }
+                                }
+                            )
+                        }
+
+                        if (showUnicodeDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showUnicodeDialog = false },
+                                title = { Text("Unicode Entry Fallback") },
+                                text = {
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        Text(
+                                            text = "How to send characters your host layout has no key " +
+                                                "for, such as emoji or Greek letters. These rely on host OS " +
+                                                "features and do not work everywhere - the Send Clipboard " +
+                                                "button is more dependable for important text.",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(vertical = 8.dp),
+                                            color = MaterialTheme.colorScheme.outlineVariant
+                                        )
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(max = 320.dp)
+                                                .verticalScroll(rememberScrollState())
+                                        ) {
+                                            UnicodeEntry.UnicodeEntryMode.entries.forEach { mode ->
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clickable {
+                                                            unicodeModeId = mode.id
+                                                            sharedPrefs.edit().putString("unicode_entry_mode", mode.id).apply()
+                                                            showUnicodeDialog = false
+                                                        }
+                                                        .padding(vertical = 6.dp, horizontal = 8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    RadioButton(
+                                                        selected = unicodeModeId == mode.id,
+                                                        onClick = {
+                                                            unicodeModeId = mode.id
+                                                            sharedPrefs.edit().putString("unicode_entry_mode", mode.id).apply()
+                                                            showUnicodeDialog = false
+                                                        }
+                                                    )
+                                                    Spacer(modifier = Modifier.width(12.dp))
+                                                    Column {
+                                                        Text(
+                                                            text = mode.displayName,
+                                                            style = MaterialTheme.typography.bodyLarge
+                                                        )
+                                                        Text(
+                                                            text = mode.description,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                confirmButton = {
+                                    TextButton(onClick = { showUnicodeDialog = false }) { Text("Close") }
+                                }
+                            )
+                        }
 
                         SettingsCardGroup(
                             title = "Device Scanning",

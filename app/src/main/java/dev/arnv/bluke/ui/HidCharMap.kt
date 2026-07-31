@@ -1,114 +1,136 @@
 package dev.arnv.bluke.ui
 
+import dev.arnv.bluke.ui.HostLayouts.HostLayout
+import dev.arnv.bluke.ui.UnicodeEntry.KeyEvent
+import dev.arnv.bluke.ui.UnicodeEntry.UnicodeEntryMode
+
 /**
- * Translates printable characters into the HID usage code (plus shift state) that a US-layout
- * physical keyboard would emit for them.
+ * Turns text into the key events that reproduce it on the host.
  *
- * The system IME (Gboard, Samsung Keyboard, ...) hands us finished text rather than key presses,
- * so anything typed there has to be turned back into scancodes before it can go out over HID.
- * The host applies its own keyboard layout to whatever we send, so this map assumes the host is
- * on US QWERTY - the same assumption the on-screen layouts in [KeyboardLayouts] already make.
+ * The system IME hands us finished text rather than key presses, so anything typed there has to be
+ * turned back into scancodes before it can go out over HID. Which scancode produces which character
+ * depends on the layout configured on the *host*, so translation is done against a [HostLayout]
+ * chosen by the user - see [HostLayouts] for why this cannot be detected automatically.
+ *
+ * Characters the chosen layout cannot reach fall through to [UnicodeEntry], and whatever survives
+ * neither route is reported so the user learns about it instead of silently losing text.
  */
 object HidCharMap {
 
-    /** A single character expressed as a keystroke: a HID usage code, optionally shifted. */
-    data class Stroke(val keyCode: Int, val shift: Boolean)
-
-    private val UNSHIFTED: Map<Char, Int> = buildMap {
-        for (c in 'a'..'z') put(c, KeyboardLayouts.KEY_A + (c - 'a'))
-        put('1', KeyboardLayouts.KEY_1)
-        put('2', KeyboardLayouts.KEY_2)
-        put('3', KeyboardLayouts.KEY_3)
-        put('4', KeyboardLayouts.KEY_4)
-        put('5', KeyboardLayouts.KEY_5)
-        put('6', KeyboardLayouts.KEY_6)
-        put('7', KeyboardLayouts.KEY_7)
-        put('8', KeyboardLayouts.KEY_8)
-        put('9', KeyboardLayouts.KEY_9)
-        put('0', KeyboardLayouts.KEY_0)
-        put(' ', KeyboardLayouts.KEY_SPACE)
-        put('\n', KeyboardLayouts.KEY_ENTER)
-        put('\t', KeyboardLayouts.KEY_TAB)
-        put('-', KeyboardLayouts.KEY_MINUS)
-        put('=', KeyboardLayouts.KEY_EQUAL)
-        put('[', KeyboardLayouts.KEY_LBRACKET)
-        put(']', KeyboardLayouts.KEY_RBRACKET)
-        put('\\', KeyboardLayouts.KEY_BACKSLASH)
-        put(';', KeyboardLayouts.KEY_SEMICOLON)
-        put('\'', KeyboardLayouts.KEY_APOSTROPHE)
-        put('`', KeyboardLayouts.KEY_GRAVE)
-        put(',', KeyboardLayouts.KEY_COMMA)
-        put('.', KeyboardLayouts.KEY_PERIOD)
-        put('/', KeyboardLayouts.KEY_SLASH)
-    }
-
-    private val SHIFTED: Map<Char, Int> = buildMap {
-        for (c in 'A'..'Z') put(c, KeyboardLayouts.KEY_A + (c - 'A'))
-        put('!', KeyboardLayouts.KEY_1)
-        put('@', KeyboardLayouts.KEY_2)
-        put('#', KeyboardLayouts.KEY_3)
-        put('$', KeyboardLayouts.KEY_4)
-        put('%', KeyboardLayouts.KEY_5)
-        put('^', KeyboardLayouts.KEY_6)
-        put('&', KeyboardLayouts.KEY_7)
-        put('*', KeyboardLayouts.KEY_8)
-        put('(', KeyboardLayouts.KEY_9)
-        put(')', KeyboardLayouts.KEY_0)
-        put('_', KeyboardLayouts.KEY_MINUS)
-        put('+', KeyboardLayouts.KEY_EQUAL)
-        put('{', KeyboardLayouts.KEY_LBRACKET)
-        put('}', KeyboardLayouts.KEY_RBRACKET)
-        put('|', KeyboardLayouts.KEY_BACKSLASH)
-        put(':', KeyboardLayouts.KEY_SEMICOLON)
-        put('"', KeyboardLayouts.KEY_APOSTROPHE)
-        put('~', KeyboardLayouts.KEY_GRAVE)
-        put('<', KeyboardLayouts.KEY_COMMA)
-        put('>', KeyboardLayouts.KEY_PERIOD)
-        put('?', KeyboardLayouts.KEY_SLASH)
-    }
-
     /**
-     * Characters an IME emits freely that have no US-layout key but do have an obvious ASCII
-     * stand-in. Smart quotes in particular arrive constantly from autocorrect, and silently
-     * dropping them would mangle ordinary sentences.
+     * ASCII stand-ins for characters an IME emits freely that most Latin layouts have no key for.
+     * Autocorrect produces smart quotes and dashes constantly, so without this ordinary sentences
+     * would be pushed down the Unicode-entry path or dropped outright.
      */
-    private val SUBSTITUTES: Map<Char, Char> = mapOf(
-        '‘' to '\'', // left single quote
-        '’' to '\'', // right single quote / apostrophe
-        '“' to '"',  // left double quote
-        '”' to '"',  // right double quote
-        '–' to '-',  // en dash
-        '—' to '-',  // em dash
-        '…' to '.',  // ellipsis (expanded by the caller into three periods)
-        ' ' to ' ',  // non-breaking space
-        '\r' to '\n'
+    private val SUBSTITUTES: Map<Char, String> = mapOf(
+        '‘' to "'",   // left single quote
+        '’' to "'",   // right single quote / apostrophe
+        '“' to "\"",  // left double quote
+        '”' to "\"",  // right double quote
+        '–' to "-",   // en dash
+        '—' to "-",   // em dash
+        '…' to "...", // ellipsis
+        ' ' to " ",   // non-breaking space
+        '\r' to "\n"
     )
 
-    /** Substitute character for [c], or null when there is no sensible ASCII equivalent. */
-    fun substitute(c: Char): Char? = SUBSTITUTES[c]
+    /** Outcome of translating a run of text. */
+    data class Translation(
+        val events: List<KeyEvent>,
+        /** Characters that neither the layout nor Unicode entry could produce. */
+        val droppedChars: String
+    )
+
+    private fun tap(code: Int) = listOf(KeyEvent(code, true), KeyEvent(code, false))
 
     /**
-     * The keystroke that produces [c], or null when the character cannot be typed on a US
-     * layout (emoji, CJK, accented letters - the caller decides how to report that).
+     * Expands a [HostLayouts.Stroke] into press/release events, wrapping it in whichever modifiers
+     * it needs. Modifiers are released again immediately so each stroke is self-contained - it costs
+     * a few extra reports but means a partially-sent burst can never leave a modifier stuck down.
      */
-    fun strokeFor(c: Char): Stroke? {
-        UNSHIFTED[c]?.let { return Stroke(it, shift = false) }
-        SHIFTED[c]?.let { return Stroke(it, shift = true) }
-        return null
+    private fun strokeEvents(stroke: HostLayouts.Stroke): List<KeyEvent> {
+        val out = mutableListOf<KeyEvent>()
+        if (stroke.shift) out.add(KeyEvent(KeyboardLayouts.MOD_LSHIFT, true))
+        // Right Alt is AltGr; the left one would be a plain Alt and would trigger menus instead.
+        if (stroke.altGr) out.add(KeyEvent(KeyboardLayouts.MOD_RALT, true))
+        out.addAll(tap(stroke.keyCode))
+        if (stroke.altGr) out.add(KeyEvent(KeyboardLayouts.MOD_RALT, false))
+        if (stroke.shift) out.add(KeyEvent(KeyboardLayouts.MOD_LSHIFT, false))
+        return out
     }
 
     /**
-     * Expands [c] into the keystrokes needed to type it, applying substitutions.
-     * Returns an empty list for characters that cannot be represented.
+     * Whether [text] can be typed in full under [layout], ignoring the Unicode fallback.
+     * Used to decide whether to warn the user before a clipboard send.
      */
-    fun strokesFor(c: Char): List<Stroke> {
-        strokeFor(c)?.let { return listOf(it) }
-        val sub = substitute(c) ?: return emptyList()
-        // The ellipsis is the one substitution that is not one-for-one.
-        if (c == '…') {
-            val dot = strokeFor('.') ?: return emptyList()
-            return listOf(dot, dot, dot)
+    fun untypableIn(text: String, layout: HostLayout): String =
+        text.filter { c -> translateChar(c, layout, UnicodeEntryMode.OFF) == null }
+
+    /**
+     * The events for a single [Char], or null when it cannot be produced at all.
+     *
+     * Surrogates are handled by [translate] rather than here, since a lone half is meaningless.
+     */
+    private fun translateChar(
+        c: Char,
+        layout: HostLayout,
+        unicodeMode: UnicodeEntryMode
+    ): List<KeyEvent>? {
+        layout.direct[c]?.let { return strokeEvents(it) }
+        layout.deadKeys[c]?.let { seq ->
+            // A dead key emits nothing itself; the host composes it with the following keystroke.
+            return strokeEvents(seq.dead) + strokeEvents(seq.base)
         }
-        return strokeFor(sub)?.let { listOf(it) } ?: emptyList()
+        val replacement = SUBSTITUTES[c]
+        if (replacement != null) {
+            // Substitutes expand to plain ASCII, so no further substitution is needed. If even the
+            // replacement is unreachable on this layout we fall through to Unicode entry below
+            // rather than giving up.
+            val strokes = replacement.map { layout.direct[it] }
+            if (strokes.all { it != null }) {
+                return strokes.filterNotNull().flatMap { strokeEvents(it) }
+            }
+        }
+        val viaUnicode = UnicodeEntry.sequenceFor(c.code, unicodeMode)
+        return viaUnicode.ifEmpty { null }
+    }
+
+    /**
+     * Translates [text] into key events for [layout], using [unicodeMode] for anything the layout
+     * cannot reach.
+     */
+    fun translate(
+        text: String,
+        layout: HostLayout,
+        unicodeMode: UnicodeEntryMode = UnicodeEntryMode.OFF
+    ): Translation {
+        val events = mutableListOf<KeyEvent>()
+        val dropped = StringBuilder()
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            // Codepoints outside the BMP arrive as surrogate pairs; emoji must be handled whole.
+            if (Character.isHighSurrogate(c) && i + 1 < text.length &&
+                Character.isLowSurrogate(text[i + 1])
+            ) {
+                val codePoint = Character.toCodePoint(c, text[i + 1])
+                val seq = UnicodeEntry.sequenceFor(codePoint, unicodeMode)
+                if (seq.isEmpty()) {
+                    dropped.appendCodePoint(codePoint)
+                } else {
+                    events.addAll(seq)
+                }
+                i += 2
+                continue
+            }
+            val translated = translateChar(c, layout, unicodeMode)
+            if (translated == null) {
+                dropped.append(c)
+            } else {
+                events.addAll(translated)
+            }
+            i++
+        }
+        return Translation(events, dropped.toString())
     }
 }
