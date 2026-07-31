@@ -90,6 +90,8 @@ fun HomeScreen(
     var keySensitivity by remember { mutableStateOf(sharedPrefs.getFloat("key_sensitivity", 6f)) }
     var lockSyncMode by remember { mutableStateOf(sharedPrefs.getString("lock_sync_mode", "host") ?: "host") }
     var launchMode by rememberSaveable { mutableStateOf(sharedPrefs.getInt("launch_mode", 0)) }
+    // Hands typing over to the user's own IME (Gboard, Samsung Keyboard, ...) instead of Bluke's keycaps.
+    var useSystemIme by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("use_system_ime", false)) }
 
     // Mute state
     var isMuted by rememberSaveable { mutableStateOf(!sharedPrefs.getBoolean("key_sound_enabled", true)) }
@@ -107,6 +109,7 @@ fun HomeScreen(
                 isHapticsEnabled = sharedPrefs.getBoolean("haptics_enabled", true)
                 keySensitivity = sharedPrefs.getFloat("key_sensitivity", 6f)
                 lockSyncMode = sharedPrefs.getString("lock_sync_mode", "host") ?: "host"
+                useSystemIme = sharedPrefs.getBoolean("use_system_ime", false)
                 val enabledModes = listOf(0, 1, 2).filter { mode ->
                     val modeStr = when (mode) {
                         0 -> "keyboard"
@@ -171,11 +174,15 @@ fun HomeScreen(
         }
     }
 
+    // System IME mode needs the soft keyboard, which cannot share the screen with a forced-landscape
+    // immersive keyboard plate - so it is treated like being back on the config screen here.
+    val immersiveKeyboard = isKeyboardActive && !(launchMode == 0 && useSystemIme)
+
     // Toggle orientation and full-screen layout helper automatically
-    LaunchedEffect(isKeyboardActive) {
+    LaunchedEffect(immersiveKeyboard) {
         val activity = context as? Activity ?: return@LaunchedEffect
         val window = activity.window ?: return@LaunchedEffect
-        if (isKeyboardActive) {
+        if (immersiveKeyboard) {
             try {
                 activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             } catch (e: Exception) {
@@ -728,7 +735,42 @@ fun HomeScreen(
                                     )
                                 }
 
-                                // 5. Mute Speaker Button (Squarish, height 28dp, radius 6dp)
+                                // 5. Input Method Toggle Pill (Bluke keycaps vs. the user's own IME).
+                                // Only shown on the keycap side; ImeInputView carries its own way back.
+                                if (!useSystemIme) {
+                                    Row(
+                                        modifier = Modifier
+                                            .height(28.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(Color.White.copy(alpha = 0.15f))
+                                            .clickable {
+                                                useSystemIme = true
+                                                sharedPrefs.edit().putBoolean("use_system_ime", true).apply()
+                                                if (isHapticsEnabled) {
+                                                    view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                                                }
+                                            }
+                                            .padding(horizontal = 8.dp)
+                                            .testTag("system_ime_toggle"),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.KeyboardAlt,
+                                            contentDescription = "Use system keyboard",
+                                            tint = Color.White.copy(alpha = 0.9f),
+                                            modifier = Modifier.size(10.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "System IME",
+                                            color = Color.White,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                // 6. Mute Speaker Button (Squarish, height 28dp, radius 6dp)
                                 Box(
                                     modifier = Modifier
                                         .size(28.dp)
@@ -761,19 +803,32 @@ fun HomeScreen(
                                 .padding(horizontal = 6.dp, vertical = 2.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            KeyboardView(
-                                layoutType = selectedLayoutType,
-                                caseColor = selectedCaseColor,
-                                activePressedKeys = activePressedKeys,
-                                isConnected = isConnected,
-                                rgbMode = selectedRgbMode,
-                                timeProgress = rgbTimeProgress,
-                                isCapsLockActive = isCapsLockActive,
-                                isNumLockActive = isNumLockActive,
-                                isScrollLockActive = isScrollLockActive,
-                                keySensitivity = keySensitivity,
-                                onKeyPressChange = { code, press -> handleLocalKeyPress(code, press) }
-                            )
+                            if (useSystemIme) {
+                                ImeInputView(
+                                    palette = Colorways.PALETTES[selectedLayoutType]
+                                        ?: Colorways.PALETTES[KeyboardLayoutType.OBLIVION_75]!!,
+                                    isConnected = isConnected,
+                                    onStroke = { code, press -> handleLocalKeyPress(code, press) },
+                                    onExitImeMode = {
+                                        useSystemIme = false
+                                        sharedPrefs.edit().putBoolean("use_system_ime", false).apply()
+                                    }
+                                )
+                            } else {
+                                KeyboardView(
+                                    layoutType = selectedLayoutType,
+                                    caseColor = selectedCaseColor,
+                                    activePressedKeys = activePressedKeys,
+                                    isConnected = isConnected,
+                                    rgbMode = selectedRgbMode,
+                                    timeProgress = rgbTimeProgress,
+                                    isCapsLockActive = isCapsLockActive,
+                                    isNumLockActive = isNumLockActive,
+                                    isScrollLockActive = isScrollLockActive,
+                                    keySensitivity = keySensitivity,
+                                    onKeyPressChange = { code, press -> handleLocalKeyPress(code, press) }
+                                )
+                            }
                         }
                     }
                 }

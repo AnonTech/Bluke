@@ -20,6 +20,7 @@ Bluke turns your Android device into a driverless, wireless Bluetooth HID mechan
 * **Switch sound synthesis**: Generates mechanical switch acoustics (Cherry MX Brown, Holy Panda, Alpaca, Kailh Box Navy, Buckling Spring, and Topre) in real-time.
 * **Themes and case colors**: Includes built-in presets (Olivia, Dracula, Oblivion, Retro, Cafe, and Mizu) and selectable case colors.
 * **System integration**: Supports system haptics, OLED black mode, and Material You dynamic color schemes.
+* **Bring your own keyboard**: Optionally type with your installed IME (Gboard, Samsung Keyboard, ...) instead of the on-screen keycaps, so autocorrect, word suggestions, and the clipboard and translate panels stay available. Committed text is relayed to the host as keystrokes.
 
 
 ## Requirement

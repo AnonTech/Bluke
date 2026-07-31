@@ -26,6 +26,7 @@ import dev.arnv.bluke.ui.KeyboardLayoutType
 import dev.arnv.bluke.sound.SwitchType
 import dev.arnv.bluke.ui.CaseColor
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.KeyboardAlt
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Palette
@@ -56,6 +57,7 @@ class BehaviorActivity : ComponentActivity() {
                 var showMacAddress by remember { mutableStateOf(sharedPrefs.getBoolean("show_mac", false)) }
                 var keySensitivity by remember { mutableStateOf(sharedPrefs.getFloat("key_sensitivity", 6f)) }
                 var lockSyncMode by remember { mutableStateOf(sharedPrefs.getString("lock_sync_mode", "host") ?: "host") }
+                var useSystemIme by remember { mutableStateOf(sharedPrefs.getBoolean("use_system_ime", false)) }
                 
                 val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
 
@@ -133,6 +135,26 @@ class BehaviorActivity : ComponentActivity() {
                                 }
                             }
                         }
+
+                        SettingsCardGroup(
+                            title = "Input Method",
+                            items = listOf(
+                                SettingsItemData(
+                                    title = "Use System Keyboard",
+                                    subtitle = "Type with your own IME (Gboard, Samsung Keyboard, ...) to get autocorrect, word suggestions, clipboard and translate panels. Committed text is relayed to the host as keystrokes.",
+                                    icon = { Icon(Icons.Default.KeyboardAlt, null, tint = MaterialTheme.colorScheme.primary) },
+                                    action = {
+                                        Switch(
+                                            checked = useSystemIme,
+                                            onCheckedChange = {
+                                                useSystemIme = it
+                                                sharedPrefs.edit().putBoolean("use_system_ime", it).apply()
+                                            }
+                                        )
+                                    }
+                                )
+                            )
+                        )
 
                         SettingsCardGroup(
                             title = "Device Scanning",
