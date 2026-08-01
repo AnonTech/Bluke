@@ -1,11 +1,9 @@
 package dev.arnv.bluke
 
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -30,6 +28,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
 import dev.arnv.bluke.ui.theme.MyApplicationTheme
 
 data class LibraryData(
@@ -94,30 +93,6 @@ class LicensesActivity : ComponentActivity() {
                             license = "Apache-2.0",
                             artifactId = "org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0",
                             githubUrl = "https://github.com/Kotlin/kotlinx.serialization"
-                        ),
-                        LibraryData(
-                            name = "Retrofit Networking Core",
-                            author = "Square",
-                            version = "2.9.0",
-                            license = "Apache-2.0",
-                            artifactId = "com.squareup.retrofit2:retrofit:2.9.0",
-                            githubUrl = "https://github.com/square/retrofit"
-                        ),
-                        LibraryData(
-                            name = "OkHttp Client Engine",
-                            author = "Square",
-                            version = "4.11.0",
-                            license = "Apache-2.0",
-                            artifactId = "com.squareup.okhttp3:okhttp:4.11.0",
-                            githubUrl = "https://github.com/square/okhttp"
-                        ),
-                        LibraryData(
-                            name = "Room Database Architecture",
-                            author = "Android Open Source Project",
-                            version = "2.6.1",
-                            license = "Apache-2.0",
-                            artifactId = "androidx.room:room-runtime:2.6.1",
-                            githubUrl = "https://developer.android.com/training/data-storage/room"
                         )
                     )
                 }
@@ -218,7 +193,7 @@ class LicensesActivity : ComponentActivity() {
                                             color = MaterialTheme.colorScheme.primary, 
                                             fontWeight = FontWeight.SemiBold,
                                             modifier = Modifier.clickable {
-                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/arnav-kr/Bluke")))
+                                                context.startActivity(Intent(Intent.ACTION_VIEW, "https://github.com/arnav-kr/Bluke".toUri()))
                                             }
                                         )
                                         Text(
@@ -226,7 +201,7 @@ class LicensesActivity : ComponentActivity() {
                                             color = MaterialTheme.colorScheme.primary, 
                                             fontWeight = FontWeight.SemiBold,
                                             modifier = Modifier.clickable {
-                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://raw.githubusercontent.com/arnav-kr/Bluke/main/LICENSE")))
+                                                context.startActivity(Intent(Intent.ACTION_VIEW, "https://raw.githubusercontent.com/arnav-kr/Bluke/main/LICENSE".toUri()))
                                             }
                                         )
                                     }
@@ -345,21 +320,21 @@ class LicensesActivity : ComponentActivity() {
                                                     horizontalArrangement = Arrangement.End
                                                 ) {
                                                     TextButton(onClick = {
-                                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(lib.githubUrl)))
+                                                        context.startActivity(Intent(Intent.ACTION_VIEW, lib.githubUrl.toUri()))
                                                     }) {
                                                         Text("View on GitHub")
                                                     }
                                                     Spacer(modifier = Modifier.width(8.dp))
                                                     TextButton(onClick = {
                                                         val licenseUrl = if (lib.name == "KBSim") {
-                                                            "https://raw.githubusercontent.com/tplai/kbsim/master/LICNSE.md"
+                                                            "https://raw.githubusercontent.com/tplai/kbsim/master/LICENSE.md"
                                                         } else {
                                                             when (lib.license) {
                                                                 "AGPL-3.0" -> "https://raw.githubusercontent.com/arnav-kr/Bluke/main/LICENSE"
                                                                 else -> "https://www.apache.org/licenses/LICENSE-2.0.txt"
                                                             }
                                                         }
-                                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(licenseUrl)))
+                                                        context.startActivity(Intent(Intent.ACTION_VIEW, licenseUrl.toUri()))
                                                     }) {
                                                         Text("Full license text")
                                                     }

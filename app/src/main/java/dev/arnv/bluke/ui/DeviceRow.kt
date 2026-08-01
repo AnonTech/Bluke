@@ -1,9 +1,8 @@
 package dev.arnv.bluke.ui
+
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothClass
-import dev.arnv.bluke.ui.theme.*
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -20,9 +19,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
-
-
 
 /**
  * Categories of Bluetooth devices with custom dynamic icons, matching backgrounds, and keyboard HID capability flags
@@ -48,13 +44,14 @@ enum class DeviceType(
 /**
  * Keyword and Bluetooth major class categorization helper
  */
+@SuppressLint("MissingPermission")
 fun classifyDevice(name: String?, device: BluetoothDevice?): DeviceType {
     val devName = name?.lowercase() ?: ""
     val majorClass = try {
         device?.bluetoothClass?.majorDeviceClass
-    } catch (e: SecurityException) {
+    } catch (_: SecurityException) {
         null
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         null
     }
 
@@ -83,6 +80,21 @@ fun classifyDevice(name: String?, device: BluetoothDevice?): DeviceType {
         return DeviceType.GAMEPAD
     }
 
+    val minorClass = try {
+        device?.bluetoothClass?.deviceClass
+    } catch (_: Exception) {
+        null
+    }
+    val isTvOrDisplay = minorClass == BluetoothClass.Device.AUDIO_VIDEO_VIDEO_DISPLAY_AND_LOUDSPEAKER ||
+                        minorClass == BluetoothClass.Device.AUDIO_VIDEO_VIDEO_MONITOR ||
+                        minorClass == BluetoothClass.Device.AUDIO_VIDEO_SET_TOP_BOX
+    if (isTvOrDisplay || devName.contains("tv") || devName.contains("television") || 
+        devName.contains("shield") || devName.contains("chromecast") || devName.contains("firestick") || 
+        devName.contains("roku") || devName.contains("tizen") || devName.contains("webos") || 
+        devName.contains("bravia") || devName.contains("mibox") || devName.contains("mi box")) {
+        return DeviceType.TV
+    }
+
     // 3. Audio / Buds / Headphones (e.g. Earphones, audio receivers)
     if (devName.contains("buds") || devName.contains("ear") || devName.contains("headphone") || 
         devName.contains("headset") || devName.contains("audio") || devName.contains("speaker") || 
@@ -102,8 +114,8 @@ fun classifyDevice(name: String?, device: BluetoothDevice?): DeviceType {
     // 5. Computer / Laptop
     if (devName.contains("laptop") || devName.contains("pc") || devName.contains("computer") || 
         devName.contains("desktop") || devName.contains("mac") || devName.contains("linux") || 
-        devName.contains("windows") || devName.contains("archy") || devName.contains("arch") || 
-        devName.contains("host") || majorClass == BluetoothClass.Device.Major.COMPUTER) {
+        devName.contains("windows") || devName.contains("host") || 
+        majorClass == BluetoothClass.Device.Major.COMPUTER) {
         return DeviceType.COMPUTER
     }
 
@@ -116,6 +128,7 @@ fun classifyDevice(name: String?, device: BluetoothDevice?): DeviceType {
     }
 
     // 7. TV / Chromecast / Smart Screen
+    // Checked above, fallback keyword search
     if (devName.contains("tv") || devName.contains("shield") || devName.contains("appletv") || 
         devName.contains("chromecast") || devName.contains("firestick") || devName.contains("television") || 
         devName.contains("smart tv")) {
@@ -128,6 +141,7 @@ fun classifyDevice(name: String?, device: BluetoothDevice?): DeviceType {
 /**
  * Beautiful device row for bonded or discovered host entities with dynamic visual categorization
  */
+@SuppressLint("MissingPermission")
 @Composable
 fun DeviceRow(
     name: String,
@@ -140,16 +154,34 @@ fun DeviceRow(
     device: BluetoothDevice? = null,
     onActionClick: () -> Unit
 ) {
-    val isError = statusText?.let { it.contains("Failed", ignoreCase = true) || it.contains("error", ignoreCase = true) || it.contains("reject", ignoreCase = true) } == true
-    val isWorking = (!isError && !isConnected && statusText?.let { it.contains("Connecting", ignoreCase=true) || it.contains("Pairing with", ignoreCase=true) } == true) || 
-                    (isConnected && statusText?.contains("disconnect", ignoreCase=true) == true)
+    val isError = statusText?.let { 
+        it.contains("Failed", ignoreCase = true) || 
+        it.contains("error", ignoreCase = true) || 
+        it.contains("reject", ignoreCase = true) ||
+        it.contains("timed out", ignoreCase = true) ||
+        it.contains("refused", ignoreCase = true)
+    } == true
+    val isWorking = (!isError && !isConnected && statusText?.let { 
+        it.contains("Connecting", ignoreCase = true) || 
+        it.contains("Pairing with", ignoreCase = true) ||
+        it.contains("Waiting for", ignoreCase = true) ||
+        it.contains("Switching to", ignoreCase = true)
+    } == true) || (isConnected && statusText?.contains("disconnect", ignoreCase = true) == true)
     
     // Categorize device to show specialized icons and capability badges
     val deviceType = classifyDevice(name, device)
 
+    val isHidCapable = try {
+        device?.uuids?.contains(android.os.ParcelUuid.fromString("00001124-0000-1000-8000-00805f9b34fb")) == true
+    } catch (_: Exception) {
+        false
+    }
+    val isBonded = device?.bondState == BluetoothDevice.BOND_BONDED
+    val isSupported = deviceType.isSupported || isBonded || isHidCapable
+
     Surface(
         onClick = onActionClick,
-        enabled = isConnected || deviceType.isSupported,
+        enabled = isConnected || isSupported,
         shape = shape,
         color = if (isConnected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
         modifier = Modifier.fillMaxWidth()
@@ -206,14 +238,14 @@ fun DeviceRow(
                     }
                     
                     // Compact Row of Status and Capability Tags
-                    if (!deviceType.isSupported || isError) {
+                    if (!isSupported || isError) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             modifier = Modifier.padding(top = 4.dp)
                         ) {
                             // Compatibility warning tag if keyboard emulation cannot work on this device type
-                            if (!deviceType.isSupported) {
+                            if (!isSupported) {
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(6.dp))
@@ -256,7 +288,7 @@ fun DeviceRow(
             
             Button(
                 onClick = onActionClick,
-                enabled = isConnected || deviceType.isSupported,
+                enabled = isConnected || isSupported,
                 shape = RoundedCornerShape(20.dp),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 colors = if (isConnected) {

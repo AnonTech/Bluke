@@ -1,16 +1,10 @@
 package dev.arnv.bluke.ui
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.withTransform
-import androidx.compose.ui.graphics.PathOperation
-import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.compose.animation.core.*
@@ -34,8 +28,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.ClipOp
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -49,13 +41,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.edit
 import dev.arnv.bluke.R
 import dev.arnv.bluke.bluetooth.BluetoothKeyboardManager
-import dev.arnv.bluke.bluetooth.BluetoothState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
+import kotlin.time.Duration.Companion.milliseconds
 
 // ── Console configuration ──
 
@@ -79,6 +73,7 @@ private data class ConsoleConfig(
     val selectButton: ButtonDef,
     val startButton: ButtonDef,
     val guideButton: ButtonDef,
+    val shareButton: ButtonDef = ButtonDef("SHARE", 17),
     val leftStickAboveDpad: Boolean = true,
     val hasTouchpad: Boolean = false,
     val touchpadMappingId: Int = -1
@@ -99,6 +94,7 @@ private val CONSOLES = listOf(
         selectButton = ButtonDef("VIEW", 8),
         startButton = ButtonDef("MENU", 9),
         guideButton = ButtonDef("XBOX", 16, Color(0xFF2E7D32)),
+        shareButton = ButtonDef("SHARE", 17),
         leftStickAboveDpad = true
     ),
     ConsoleConfig(
@@ -115,14 +111,16 @@ private val CONSOLES = listOf(
         selectButton = ButtonDef("CREATE", 8),
         startButton = ButtonDef("OPTIONS", 9),
         guideButton = ButtonDef("PS", 16, Color(0xFF1565C0)),
+        shareButton = ButtonDef("SHARE", 17),
         leftStickAboveDpad = false,
         hasTouchpad = true,
-        touchpadMappingId = 17
+        touchpadMappingId = 18
     )
 )
 
 // ── Main View ──
 
+@SuppressLint("MissingPermission")
 @Composable
 fun GamepadView(
     btManager: BluetoothKeyboardManager,
@@ -130,12 +128,12 @@ fun GamepadView(
     launchMode: Int,
     onModeChange: (Int) -> Unit,
     sharedPrefs: SharedPreferences,
-    caseBrush: Brush
+    @Suppress("UNUSED_PARAMETER") caseBrush: Brush
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var selectedIndex by rememberSaveable { mutableStateOf(0) }
+    var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
     val config = CONSOLES[selectedIndex]
 
     var isEditMode by rememberSaveable { mutableStateOf(false) }
@@ -146,66 +144,64 @@ fun GamepadView(
 
     val triggerVibration = { milliseconds: Long ->
         if (isVibrationEnabled) {
+            @Suppress("DEPRECATION")
             val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-            vibrator?.let {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    it.vibrate(VibrationEffect.createOneShot(milliseconds, VibrationEffect.DEFAULT_AMPLITUDE))
-                } else {
-                    @Suppress("DEPRECATION")
-                    it.vibrate(milliseconds)
-                }
-            }
+            vibrator?.vibrate(VibrationEffect.createOneShot(milliseconds, VibrationEffect.DEFAULT_AMPLITUDE))
         }
     }
 
     val saveLayoutPref = { key: String, value: Float ->
-        sharedPrefs.edit().putFloat(key, value).apply()
+        sharedPrefs.edit { putFloat(key, value) }
     }
 
     // Positions & Scales loaded dynamically per console layout (Xbox Series / PlayStation 5)
-    var dpadOffsetX by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_dpad_x", if (config.id == "playstation_5") -24f else 32f)) }
-    var dpadOffsetY by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_dpad_y", if (config.id == "playstation_5") 0f else 20f)) }
-    var dpadScale by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_dpad_scale", 1f)) }
+    var dpadOffsetX by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_dpad_x", if (config.id == "playstation_5") -24f else 32f)) }
+    var dpadOffsetY by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_dpad_y", if (config.id == "playstation_5") 0f else 20f)) }
+    var dpadScale by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_dpad_scale", 1f)) }
 
-    var leftStickOffsetX by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_left_stick_x", if (config.id == "playstation_5") 45f else 0f)) }
-    var leftStickOffsetY by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_left_stick_y", if (config.id == "playstation_5") 20f else 0f)) }
-    var leftStickScale by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_left_stick_scale", 1f)) }
+    var leftStickOffsetX by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_left_stick_x", if (config.id == "playstation_5") 45f else 0f)) }
+    var leftStickOffsetY by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_left_stick_y", if (config.id == "playstation_5") 20f else 0f)) }
+    var leftStickScale by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_left_stick_scale", 1f)) }
 
-    var rightStickOffsetX by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_right_stick_x", -45f)) }
-    var rightStickOffsetY by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_right_stick_y", 20f)) }
-    var rightStickScale by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_right_stick_scale", 1f)) }
+    var rightStickOffsetX by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_right_stick_x", -45f)) }
+    var rightStickOffsetY by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_right_stick_y", 20f)) }
+    var rightStickScale by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_right_stick_scale", 1f)) }
 
-    var faceButtonsOffsetX by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_face_buttons_x", 0f)) }
-    var faceButtonsOffsetY by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_face_buttons_y", 0f)) }
-    var faceButtonsScale by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_face_buttons_scale", 1f)) }
+    var faceButtonsOffsetX by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_face_buttons_x", 0f)) }
+    var faceButtonsOffsetY by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_face_buttons_y", 0f)) }
+    var faceButtonsScale by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_face_buttons_scale", 1f)) }
 
-    var leftTriggerOffsetX by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_left_trigger_x", 0f)) }
-    var leftTriggerOffsetY by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_left_trigger_y", 0f)) }
-    var leftTriggerScale by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_left_trigger_scale", 1f)) }
+    var leftTriggerOffsetX by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_left_trigger_x", 0f)) }
+    var leftTriggerOffsetY by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_left_trigger_y", 0f)) }
+    var leftTriggerScale by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_left_trigger_scale", 1f)) }
 
-    var leftBumperOffsetX by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_left_bumper_x", 0f)) }
-    var leftBumperOffsetY by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_left_bumper_y", 0f)) }
-    var leftBumperScale by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_left_bumper_scale", 1f)) }
+    var leftBumperOffsetX by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_left_bumper_x", 0f)) }
+    var leftBumperOffsetY by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_left_bumper_y", 0f)) }
+    var leftBumperScale by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_left_bumper_scale", 1f)) }
 
-    var rightTriggerOffsetX by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_right_trigger_x", 0f)) }
-    var rightTriggerOffsetY by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_right_trigger_y", 0f)) }
-    var rightTriggerScale by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_right_trigger_scale", 1f)) }
+    var rightTriggerOffsetX by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_right_trigger_x", 0f)) }
+    var rightTriggerOffsetY by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_right_trigger_y", 0f)) }
+    var rightTriggerScale by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_right_trigger_scale", 1f)) }
 
-    var rightBumperOffsetX by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_right_bumper_x", 0f)) }
-    var rightBumperOffsetY by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_right_bumper_y", 0f)) }
-    var rightBumperScale by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_right_bumper_scale", 1f)) }
+    var rightBumperOffsetX by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_right_bumper_x", 0f)) }
+    var rightBumperOffsetY by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_right_bumper_y", 0f)) }
+    var rightBumperScale by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_right_bumper_scale", 1f)) }
 
-    var guideOffsetX by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_guide_x", 0f)) }
-    var guideOffsetY by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_guide_y", 0f)) }
-    var guideScale by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_guide_scale", 1f)) }
+    var guideOffsetX by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_guide_x", 0f)) }
+    var guideOffsetY by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_guide_y", 0f)) }
+    var guideScale by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_guide_scale", 1f)) }
 
-    var selectOffsetX by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_select_x", 0f)) }
-    var selectOffsetY by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_select_y", 0f)) }
-    var selectScale by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_select_scale", 1f)) }
+    var selectOffsetX by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_select_x", 0f)) }
+    var selectOffsetY by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_select_y", 0f)) }
+    var selectScale by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_select_scale", 1f)) }
 
-    var startOffsetX by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_start_x", 0f)) }
-    var startOffsetY by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_start_y", 0f)) }
-    var startScale by remember(config.id) { mutableStateOf(sharedPrefs.getFloat("${config.id}_start_scale", 1f)) }
+    var shareOffsetX by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_share_x", 0f)) }
+    var shareOffsetY by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_share_y", 0f)) }
+    var shareScale by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_share_scale", 1f)) }
+
+    var startOffsetX by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_start_x", 0f)) }
+    var startOffsetY by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_start_y", 0f)) }
+    var startScale by remember(config.id) { mutableFloatStateOf(sharedPrefs.getFloat("${config.id}_start_scale", 1f)) }
 
     val isModified = remember(
         config.id,
@@ -219,6 +215,7 @@ fun GamepadView(
         rightBumperOffsetX, rightBumperOffsetY, rightBumperScale,
         guideOffsetX, guideOffsetY, guideScale,
         selectOffsetX, selectOffsetY, selectScale,
+        shareOffsetX, shareOffsetY, shareScale,
         startOffsetX, startOffsetY, startScale
     ) {
         val defaultDpadX = if (config.id == "playstation_5") -24f else 32f
@@ -238,6 +235,7 @@ fun GamepadView(
         rightBumperOffsetX != 0f || rightBumperOffsetY != 0f || rightBumperScale != 1f ||
         guideOffsetX != 0f || guideOffsetY != 0f || guideScale != 1f ||
         selectOffsetX != 0f || selectOffsetY != 0f || selectScale != 1f ||
+        shareOffsetX != 0f || shareOffsetY != 0f || shareScale != 1f ||
         startOffsetX != 0f || startOffsetY != 0f || startScale != 1f
     }
 
@@ -285,51 +283,54 @@ fun GamepadView(
 
         guideOffsetX = 0f
         guideOffsetY = 0f
-        guideScale = 1f
-
-        selectOffsetX = 0f
+         selectOffsetX = 0f
         selectOffsetY = 0f
         selectScale = 1f
-
+        shareOffsetX = 0f
+        shareOffsetY = 0f
+        shareScale = 1f
         startOffsetX = 0f
         startOffsetY = 0f
         startScale = 1f
         
-        sharedPrefs.edit()
-            .remove("${config.id}_dpad_x")
-            .remove("${config.id}_dpad_y")
-            .remove("${config.id}_dpad_scale")
-            .remove("${config.id}_left_stick_x")
-            .remove("${config.id}_left_stick_y")
-            .remove("${config.id}_left_stick_scale")
-            .remove("${config.id}_right_stick_x")
-            .remove("${config.id}_right_stick_y")
-            .remove("${config.id}_right_stick_scale")
-            .remove("${config.id}_face_buttons_x")
-            .remove("${config.id}_face_buttons_y")
-            .remove("${config.id}_face_buttons_scale")
-            .remove("${config.id}_left_trigger_x")
-            .remove("${config.id}_left_trigger_y")
-            .remove("${config.id}_left_trigger_scale")
-            .remove("${config.id}_left_bumper_x")
-            .remove("${config.id}_left_bumper_y")
-            .remove("${config.id}_left_bumper_scale")
-            .remove("${config.id}_right_trigger_x")
-            .remove("${config.id}_right_trigger_y")
-            .remove("${config.id}_right_trigger_scale")
-            .remove("${config.id}_right_bumper_x")
-            .remove("${config.id}_right_bumper_y")
-            .remove("${config.id}_right_bumper_scale")
-            .remove("${config.id}_guide_x")
-            .remove("${config.id}_guide_y")
-            .remove("${config.id}_guide_scale")
-            .remove("${config.id}_select_x")
-            .remove("${config.id}_select_y")
-            .remove("${config.id}_select_scale")
-            .remove("${config.id}_start_x")
-            .remove("${config.id}_start_y")
-            .remove("${config.id}_start_scale")
-            .apply()
+        sharedPrefs.edit {
+            remove("${config.id}_dpad_x")
+            remove("${config.id}_dpad_y")
+            remove("${config.id}_dpad_scale")
+            remove("${config.id}_left_stick_x")
+            remove("${config.id}_left_stick_y")
+            remove("${config.id}_left_stick_scale")
+            remove("${config.id}_right_stick_x")
+            remove("${config.id}_right_stick_y")
+            remove("${config.id}_right_stick_scale")
+            remove("${config.id}_face_buttons_x")
+            remove("${config.id}_face_buttons_y")
+            remove("${config.id}_face_buttons_scale")
+            remove("${config.id}_left_trigger_x")
+            remove("${config.id}_left_trigger_y")
+            remove("${config.id}_left_trigger_scale")
+            remove("${config.id}_left_bumper_x")
+            remove("${config.id}_left_bumper_y")
+            remove("${config.id}_left_bumper_scale")
+            remove("${config.id}_right_trigger_x")
+            remove("${config.id}_right_trigger_y")
+            remove("${config.id}_right_trigger_scale")
+            remove("${config.id}_right_bumper_x")
+            remove("${config.id}_right_bumper_y")
+            remove("${config.id}_right_bumper_scale")
+            remove("${config.id}_guide_x")
+            remove("${config.id}_guide_y")
+            remove("${config.id}_guide_scale")
+            remove("${config.id}_select_x")
+            remove("${config.id}_select_y")
+            remove("${config.id}_select_scale")
+            remove("${config.id}_share_x")
+            remove("${config.id}_share_y")
+            remove("${config.id}_share_scale")
+            remove("${config.id}_start_x")
+            remove("${config.id}_start_y")
+            remove("${config.id}_start_scale")
+        }
             
         triggerVibration(50)
     }
@@ -338,68 +339,24 @@ fun GamepadView(
     val isConnected = connectedDevNow != null
     val deviceName = connectedDevNow?.name ?: "No Host"
 
-    var buttonMask by remember { mutableStateOf(0) }
-    var lastGamepadReportTime by remember { mutableStateOf(0L) }
+    var buttonMask by remember { mutableIntStateOf(0) }
+    var lastGamepadReportTime by remember { mutableLongStateOf(0L) }
     var isGamepadDirty by remember { mutableStateOf(false) }
     
-    var leftStickX by remember { mutableStateOf(0f) }
-    var leftStickY by remember { mutableStateOf(0f) }
-    var rightStickX by remember { mutableStateOf(0f) }
-    var rightStickY by remember { mutableStateOf(0f) }
-
-    var accelX by remember { mutableStateOf(0.toShort()) }
-    var accelY by remember { mutableStateOf(0.toShort()) }
-    var accelZ by remember { mutableStateOf(0.toShort()) }
-    var gyroX by remember { mutableStateOf(0.toShort()) }
-    var gyroY by remember { mutableStateOf(0.toShort()) }
-    var gyroZ by remember { mutableStateOf(0.toShort()) }
-
-    var isMotionSensorEnabled by remember { mutableStateOf(true) }
-
-    DisposableEffect(isMotionSensorEnabled) {
-        if (!isMotionSensorEnabled) return@DisposableEffect onDispose {}
-
-        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        val gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
-        val accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-
-        val listener = object : SensorEventListener {
-            override fun onSensorChanged(event: SensorEvent?) {
-                event ?: return
-                if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
-                    accelX = (event.values[0] * 16384f / 9.80665f).toInt().coerceIn(-32768, 32767).toShort()
-                    accelY = (event.values[1] * 16384f / 9.80665f).toInt().coerceIn(-32768, 32767).toShort()
-                    accelZ = (event.values[2] * 16384f / 9.80665f).toInt().coerceIn(-32768, 32767).toShort()
-                } else if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
-                    gyroX = (event.values[0] * 16384f).toInt().coerceIn(-32768, 32767).toShort()
-                    gyroY = (event.values[1] * 16384f).toInt().coerceIn(-32768, 32767).toShort()
-                    gyroZ = (event.values[2] * 16384f).toInt().coerceIn(-32768, 32767).toShort()
-                }
-                isGamepadDirty = true
-            }
-            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-        }
-
-        accelSensor?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_GAME) }
-        gyroSensor?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_GAME) }
-
-        onDispose {
-            sensorManager.unregisterListener(listener)
-        }
-    }
-
+    var leftStickX by remember { mutableFloatStateOf(0f) }
+    var leftStickY by remember { mutableFloatStateOf(0f) }
+    var rightStickX by remember { mutableFloatStateOf(0f) }
+    var rightStickY by remember { mutableFloatStateOf(0f) }
 
     val transmitGamepadState = { force: Boolean ->
         val now = System.currentTimeMillis()
         if (force || now - lastGamepadReportTime >= 8L) {
             btManager.sendGamepadReport(
                 buttonMask,
-                (leftStickX * 127f).coerceIn(-127f, 127f).toInt().toByte(),
-                (leftStickY * 127f).coerceIn(-127f, 127f).toInt().toByte(),
-                (rightStickX * 127f).coerceIn(-127f, 127f).toInt().toByte(),
-                (rightStickY * 127f).coerceIn(-127f, 127f).toInt().toByte(),
-                accelX, accelY, accelZ,
-                gyroX, gyroY, gyroZ
+                leftStickX,
+                leftStickY,
+                rightStickX,
+                rightStickY
             )
             lastGamepadReportTime = now
             isGamepadDirty = false
@@ -410,16 +367,14 @@ fun GamepadView(
 
     LaunchedEffect(Unit) {
         while (true) {
-            delay(10)
+            delay(10L.milliseconds)
             if (isGamepadDirty) {
                 btManager.sendGamepadReport(
                     buttonMask,
-                    (leftStickX * 127f).coerceIn(-127f, 127f).toInt().toByte(),
-                    (leftStickY * 127f).coerceIn(-127f, 127f).toInt().toByte(),
-                    (rightStickX * 127f).coerceIn(-127f, 127f).toInt().toByte(),
-                    (rightStickY * 127f).coerceIn(-127f, 127f).toInt().toByte(),
-                    accelX, accelY, accelZ,
-                    gyroX, gyroY, gyroZ
+                    leftStickX,
+                    leftStickY,
+                    rightStickX,
+                    rightStickY
                 )
                 lastGamepadReportTime = System.currentTimeMillis()
                 isGamepadDirty = false
@@ -585,7 +540,7 @@ fun GamepadView(
                             .clickable {
                                 val active = !isVibrationEnabled
                                 isVibrationEnabled = active
-                                sharedPrefs.edit().putBoolean("gamepad_vibration_enabled", active).apply()
+                                sharedPrefs.edit { putBoolean("gamepad_vibration_enabled", active) }
                                 if (active) triggerVibration(50)
                             }
                             .testTag("vibration_gamepad_toggle"),
@@ -633,8 +588,10 @@ fun GamepadView(
                             GamepadAnalogStick(
                                 label = "L",
                                 isClicked = (buttonMask and (1 shl 10)) != 0,
+                                isHeld = (buttonMask and (1 shl 10)) != 0,
                                 onMove = { x, y -> leftStickX = x; leftStickY = y; transmitGamepadState(false) },
-                                onStickClick = { scope.launch { pressButton(10); delay(100); releaseButton(10) } }
+                                onStickClick = { scope.launch { pressButton(10); delay(100L.milliseconds); releaseButton(10) } },
+                                onToggleHold = { hold -> if (hold) pressButton(10) else releaseButton(10) }
                             )
                         }
                         Spacer(Modifier.height(16.dp))
@@ -736,9 +693,9 @@ fun GamepadView(
 
                         Spacer(Modifier.height(12.dp))
 
-                        // Center buttons (Select, Start) flanking the area below Guide
+                        // Center buttons (Select, Share, Start) flanking the area below Guide
                         Row(
-                            modifier = Modifier.fillMaxWidth(0.6f),
+                            modifier = Modifier.fillMaxWidth(0.75f),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -751,6 +708,16 @@ fun GamepadView(
                                 onScaleChange = { s -> selectScale = s; saveLayoutPref("${config.id}_select_scale", s) }
                             ) {
                                 GamepadCenterButton(config.selectButton, pressButton, releaseButton)
+                            }
+                            EditableComponentWrapper(
+                                isEditMode = isEditMode,
+                                offsetX = shareOffsetX,
+                                offsetY = shareOffsetY,
+                                scale = shareScale,
+                                onOffsetChange = { x, y -> shareOffsetX = x; shareOffsetY = y; saveLayoutPref("${config.id}_share_x", x); saveLayoutPref("${config.id}_share_y", y) },
+                                onScaleChange = { s -> shareScale = s; saveLayoutPref("${config.id}_share_scale", s) }
+                            ) {
+                                GamepadCenterButton(config.shareButton, pressButton, releaseButton)
                             }
                             EditableComponentWrapper(
                                 isEditMode = isEditMode,
@@ -800,8 +767,10 @@ fun GamepadView(
                             GamepadAnalogStick(
                                 label = "R",
                                 isClicked = (buttonMask and (1 shl 11)) != 0,
+                                isHeld = (buttonMask and (1 shl 11)) != 0,
                                 onMove = { x, y -> rightStickX = x; rightStickY = y; transmitGamepadState(false) },
-                                onStickClick = { scope.launch { pressButton(11); delay(100); releaseButton(11) } }
+                                onStickClick = { scope.launch { pressButton(11); delay(100L.milliseconds); releaseButton(11) } },
+                                onToggleHold = { hold -> if (hold) pressButton(11) else releaseButton(11) }
                             )
                         }
                         Spacer(Modifier.height(12.dp))
@@ -845,8 +814,10 @@ fun GamepadView(
                             GamepadAnalogStick(
                                 label = "L",
                                 isClicked = (buttonMask and (1 shl 10)) != 0,
+                                isHeld = (buttonMask and (1 shl 10)) != 0,
                                 onMove = { x, y -> leftStickX = x; leftStickY = y; transmitGamepadState(false) },
-                                onStickClick = { scope.launch { pressButton(10); delay(100); releaseButton(10) } }
+                                onStickClick = { scope.launch { pressButton(10); delay(100L.milliseconds); releaseButton(10) } },
+                                onToggleHold = { hold -> if (hold) pressButton(10) else releaseButton(10) }
                             )
                         }
                     }
@@ -929,9 +900,9 @@ fun GamepadView(
 
                         Spacer(Modifier.height(12.dp))
 
-                        // Center buttons (Select, Start) flanking the area below Guide
+                        // Center buttons (Select, Share, Start) flanking the area below Guide
                         Row(
-                            modifier = Modifier.fillMaxWidth(0.6f),
+                            modifier = Modifier.fillMaxWidth(0.75f),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -944,6 +915,16 @@ fun GamepadView(
                                 onScaleChange = { s -> selectScale = s; saveLayoutPref("${config.id}_select_scale", s) }
                             ) {
                                 GamepadCenterButton(config.selectButton, pressButton, releaseButton)
+                            }
+                            EditableComponentWrapper(
+                                isEditMode = isEditMode,
+                                offsetX = shareOffsetX,
+                                offsetY = shareOffsetY,
+                                scale = shareScale,
+                                onOffsetChange = { x, y -> shareOffsetX = x; shareOffsetY = y; saveLayoutPref("${config.id}_share_x", x); saveLayoutPref("${config.id}_share_y", y) },
+                                onScaleChange = { s -> shareScale = s; saveLayoutPref("${config.id}_share_scale", s) }
+                            ) {
+                                GamepadCenterButton(config.shareButton, pressButton, releaseButton)
                             }
                             EditableComponentWrapper(
                                 isEditMode = isEditMode,
@@ -993,16 +974,18 @@ fun GamepadView(
                             GamepadAnalogStick(
                                 label = "R",
                                 isClicked = (buttonMask and (1 shl 11)) != 0,
+                                isHeld = (buttonMask and (1 shl 11)) != 0,
                                 onMove = { x, y -> rightStickX = x; rightStickY = y; transmitGamepadState(false) },
-                                onStickClick = { scope.launch { pressButton(11); delay(100); releaseButton(11) } }
+                                onStickClick = { scope.launch { pressButton(11); delay(100L.milliseconds); releaseButton(11) } },
+                                onToggleHold = { hold -> if (hold) pressButton(11) else releaseButton(11) }
                             )
                         }
                     }
                 }
             }
-            } // closing Box
         }
     }
+}
 }
 
 // ── Sub-Components ──
@@ -1014,12 +997,13 @@ fun Modifier.gamepadButtonTouch(
 ): Modifier = this.pointerInput(Unit) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
+        val targetPointerId = down.id
         onPressedStateChange(true)
         onPress()
         down.consume()
         while (true) {
             val event = awaitPointerEvent()
-            val change = event.changes.firstOrNull() ?: break
+            val change = event.changes.firstOrNull { it.id == targetPointerId } ?: break
             if (!change.pressed) {
                 onPressedStateChange(false)
                 onRelease()
@@ -1222,9 +1206,11 @@ private fun GamepadFaceButton(
     isXboxStyle: Boolean,
     onPress: (Int) -> Unit,
     onRelease: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    externalIsPressed: Boolean = false
 ) {
-    var isPressed by remember { mutableStateOf(false) }
+    var internalIsPressed by remember { mutableStateOf(false) }
+    val isPressed = internalIsPressed || externalIsPressed
 
     val pressOffsetY by animateDpAsState(
         targetValue = if (isPressed) 0.6.dp else 0.dp,
@@ -1271,14 +1257,12 @@ private fun GamepadFaceButton(
                 .gamepadButtonTouch(
                     onPress = { onPress(button.mappingId) },
                     onRelease = { onRelease(button.mappingId) },
-                    onPressedStateChange = { isPressed = it }
+                    onPressedStateChange = { internalIsPressed = it }
                 ),
             contentAlignment = Alignment.Center
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val r = size.width / 2f
-                val cx = r
-                val cy = r
 
                 val maxOffset = 0.6.dp.toPx()
                 val edgeOffset = if (isPressed) 0.3f.dp.toPx() else 1.8f.dp.toPx()
@@ -1292,7 +1276,7 @@ private fun GamepadFaceButton(
                 drawCircle(
                     color = Color(0xFF1F1F21),
                     radius = edgeR,
-                    center = Offset(cx, cy + edgeOffset / 2f)
+                    center = Offset(r, r + edgeOffset / 2f)
                 )
 
                 // Top face of the disk (themed to the background, soft vertical gradient)
@@ -1302,14 +1286,14 @@ private fun GamepadFaceButton(
                         colors = listOf(faceColor.gpLighter(0.08f), faceColor.gpDarker(0.12f))
                     ),
                     radius = faceR,
-                    center = Offset(cx, cy - faceOffset)
+                    center = Offset(r, r - faceOffset)
                 )
 
                 // Flat face bevel edge highlight
                 drawCircle(
                     color = Color.White.copy(alpha = if (isPressed) 0.05f else 0.15f),
                     radius = faceR - 0.5.dp.toPx(),
-                    center = Offset(cx, cy - faceOffset),
+                    center = Offset(r, r - faceOffset),
                     style = Stroke(width = 0.8.dp.toPx())
                 )
 
@@ -1317,7 +1301,7 @@ private fun GamepadFaceButton(
                 drawCircle(
                     color = Color.Black.copy(alpha = if (isPressed) 0.10f else 0.25f),
                     radius = faceR,
-                    center = Offset(cx, cy - faceOffset),
+                    center = Offset(r, r - faceOffset),
                     style = Stroke(width = 0.8.dp.toPx())
                 )
             }
@@ -1385,20 +1369,101 @@ private fun GamepadFaceButton(
 @Composable
 private fun FaceButtonsDiamond(
     config: ConsoleConfig,
-    isXboxStyle: Boolean,
+    @Suppress("UNUSED_PARAMETER") isXboxStyle: Boolean,
     onPress: (Int) -> Unit,
     onRelease: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val spacing = 40.dp
+    val density = LocalDensity.current.density
+
+    // Track active pressed button mapping IDs via proximity multi-touch
+    val activePressedButtons = remember { mutableStateListOf<Int>() }
+
+    val updateProximityPresses = { pointerPositions: List<Offset>, containerSizePx: Float ->
+        val centerPx = containerSizePx / 2f
+        val spacingPx = 40f * density
+        val touchRadiusPx = 35f * density // Proximity radius covering multi-button thumb presses
+
+        val topCenter = Offset(centerPx, centerPx - spacingPx)
+        val rightCenter = Offset(centerPx + spacingPx, centerPx)
+        val bottomCenter = Offset(centerPx, centerPx + spacingPx)
+        val leftCenter = Offset(centerPx - spacingPx, centerPx)
+
+        val buttonCenters = listOf(
+            config.faceTop.mappingId to topCenter,
+            config.faceRight.mappingId to rightCenter,
+            config.faceBottom.mappingId to bottomCenter,
+            config.faceLeft.mappingId to leftCenter
+        )
+
+        val newlyActive = mutableSetOf<Int>()
+        for (pos in pointerPositions) {
+            for ((mappingId, btnCenter) in buttonCenters) {
+                val dx = pos.x - btnCenter.x
+                val dy = pos.y - btnCenter.y
+                val dist = sqrt(dx * dx + dy * dy)
+                if (dist <= touchRadiusPx) {
+                    newlyActive.add(mappingId)
+                }
+            }
+        }
+
+        // Press newly touched buttons
+        for (mappingId in newlyActive) {
+            if (!activePressedButtons.contains(mappingId)) {
+                activePressedButtons.add(mappingId)
+                onPress(mappingId)
+            }
+        }
+
+        // Release buttons no longer under any active finger
+        val toRemove = mutableListOf<Int>()
+        for (mappingId in activePressedButtons) {
+            if (!newlyActive.contains(mappingId)) {
+                toRemove.add(mappingId)
+                onRelease(mappingId)
+            }
+        }
+        activePressedButtons.removeAll(toRemove.toSet())
+    }
+
     Box(
-        modifier = modifier.size(134.dp),
+        modifier = modifier
+            .size(134.dp)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val activePositions = mutableMapOf<PointerId, Offset>()
+                    activePositions[down.id] = down.position
+                    updateProximityPresses(activePositions.values.toList(), size.width.toFloat())
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        for (change in event.changes) {
+                            if (change.pressed) {
+                                activePositions[change.id] = change.position
+                            } else {
+                                activePositions.remove(change.id)
+                            }
+                        }
+                        if (activePositions.isEmpty()) {
+                            for (id in activePressedButtons.toList()) {
+                                onRelease(id)
+                            }
+                            activePressedButtons.clear()
+                            break
+                        }
+                        updateProximityPresses(activePositions.values.toList(), size.width.toFloat())
+                    }
+                }
+            },
         contentAlignment = Alignment.Center
     ) {
-        GamepadFaceButton(config.faceTop, isXboxStyle, onPress, onRelease, Modifier.offset(y = -spacing))
-        GamepadFaceButton(config.faceRight, isXboxStyle, onPress, onRelease, Modifier.offset(x = spacing))
-        GamepadFaceButton(config.faceBottom, isXboxStyle, onPress, onRelease, Modifier.offset(y = spacing))
-        GamepadFaceButton(config.faceLeft, isXboxStyle, onPress, onRelease, Modifier.offset(x = -spacing))
+        GamepadFaceButton(config.faceTop, isXboxStyle, onPress, onRelease, Modifier.offset(y = -spacing), externalIsPressed = activePressedButtons.contains(config.faceTop.mappingId))
+        GamepadFaceButton(config.faceRight, isXboxStyle, onPress, onRelease, Modifier.offset(x = spacing), externalIsPressed = activePressedButtons.contains(config.faceRight.mappingId))
+        GamepadFaceButton(config.faceBottom, isXboxStyle, onPress, onRelease, Modifier.offset(y = spacing), externalIsPressed = activePressedButtons.contains(config.faceBottom.mappingId))
+        GamepadFaceButton(config.faceLeft, isXboxStyle, onPress, onRelease, Modifier.offset(x = -spacing), externalIsPressed = activePressedButtons.contains(config.faceLeft.mappingId))
     }
 }
 
@@ -1455,8 +1520,6 @@ private fun GamepadCenterButton(
             val baseColor = Color(0xFF333336)
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val r = size.width / 2f
-                val cx = r
-                val cy = r
 
                 val maxOffset = 0.6.dp.toPx()
                 val edgeOffset = if (isPressed) 0.3f.dp.toPx() else 1.5f.dp.toPx()
@@ -1470,7 +1533,7 @@ private fun GamepadCenterButton(
                 drawCircle(
                     color = Color(0xFF1F1F21),
                     radius = edgeR,
-                    center = Offset(cx, cy + edgeOffset / 2f)
+                    center = Offset(r, r + edgeOffset / 2f)
                 )
 
                 // Top face
@@ -1480,7 +1543,7 @@ private fun GamepadCenterButton(
                         colors = listOf(faceColor.gpLighter(0.08f), faceColor.gpDarker(0.12f))
                     ),
                     radius = faceR,
-                    center = Offset(cx, cy - faceOffset)
+                    center = Offset(r, r - faceOffset)
                 )
 
                 // Bevel highlight (vertical gradient brush for better shading)
@@ -1493,7 +1556,7 @@ private fun GamepadCenterButton(
                         }
                     ),
                     radius = faceR - 0.5.dp.toPx(),
-                    center = Offset(cx, cy - faceOffset),
+                    center = Offset(r, r - faceOffset),
                     style = Stroke(width = 0.8.dp.toPx())
                 )
             }
@@ -1526,6 +1589,13 @@ private fun GamepadCenterButton(
                             style = Stroke(strokeW)
                         )
                     }
+                } else if (button.label == "SHARE") {
+                    Icon(
+                        imageVector = Icons.Default.IosShare,
+                        contentDescription = "Share",
+                        tint = Color.White.copy(alpha = 0.75f),
+                        modifier = Modifier.size(11.dp)
+                    )
                 } else {
                     Column(
                         modifier = Modifier.size(10.dp),
@@ -1644,7 +1714,7 @@ private fun GamepadShareButton(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.Upload,
+                    imageVector = Icons.Default.IosShare,
                     contentDescription = "Share",
                     tint = Color.White.copy(alpha = 0.75f),
                     modifier = Modifier.size(12.dp)
@@ -1706,9 +1776,7 @@ private fun XboxLogoGuideButton(
             val baseColor = Color(0xFF333336)
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val r = size.width / 2f
-                val cx = r
-                val cy = r
-                
+
                 val maxOffset = 0.6.dp.toPx()
                 val edgeOffset = if (isPressed) 0.3f.dp.toPx() else 1.8f.dp.toPx()
                 val faceOffset = if (isPressed) 0f else maxOffset
@@ -1721,7 +1789,7 @@ private fun XboxLogoGuideButton(
                 drawCircle(
                     color = Color(0xFF1F1F21),
                     radius = edgeR,
-                    center = Offset(cx, cy + edgeOffset / 2f)
+                    center = Offset(r, r + edgeOffset / 2f)
                 )
 
                 // Top face
@@ -1731,9 +1799,9 @@ private fun XboxLogoGuideButton(
                         colors = listOf(faceColor.gpLighter(0.08f), faceColor.gpDarker(0.12f))
                     ),
                     radius = faceR,
-                    center = Offset(cx, cy - faceOffset)
+                    center = Offset(r, r - faceOffset)
                 )
-                
+
                 // Bevel highlight border (vertical gradient brush for better shading)
                 drawCircle(
                     brush = Brush.verticalGradient(
@@ -1744,7 +1812,7 @@ private fun XboxLogoGuideButton(
                         }
                     ),
                     radius = faceR - 0.5.dp.toPx(),
-                    center = Offset(cx, cy - faceOffset),
+                    center = Offset(r, r - faceOffset),
                     style = Stroke(width = 0.8.dp.toPx())
                 )
             }
@@ -1820,9 +1888,7 @@ private fun PlayStationLogoButton(
             val baseColor = Color(0xFF333336)
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val r = size.width / 2f
-                val cx = r
-                val cy = r
-                
+
                 val maxOffset = 0.6.dp.toPx()
                 val edgeOffset = if (isPressed) 0.3f.dp.toPx() else 1.8f.dp.toPx()
                 val faceOffset = if (isPressed) 0f else maxOffset
@@ -1835,7 +1901,7 @@ private fun PlayStationLogoButton(
                 drawCircle(
                     color = Color(0xFF1F1F21),
                     radius = edgeR,
-                    center = Offset(cx, cy + edgeOffset / 2f)
+                    center = Offset(r, r + edgeOffset / 2f)
                 )
 
                 // Top face
@@ -1845,7 +1911,7 @@ private fun PlayStationLogoButton(
                         colors = listOf(faceColor.gpLighter(0.08f), faceColor.gpDarker(0.12f))
                     ),
                     radius = faceR,
-                    center = Offset(cx, cy - faceOffset)
+                    center = Offset(r, r - faceOffset)
                 )
                 
                 // Bevel highlight (vertical gradient brush for better shading)
@@ -1858,7 +1924,7 @@ private fun PlayStationLogoButton(
                         }
                     ),
                     radius = faceR - 0.5.dp.toPx(),
-                    center = Offset(cx, cy - faceOffset),
+                    center = Offset(r, r - faceOffset),
                     style = Stroke(width = 0.8.dp.toPx())
                 )
             }
@@ -1882,36 +1948,99 @@ private fun PlayStationLogoButton(
     }
 }
 
+
+
 @Composable
-private fun PlayStationTouchpad(
-    mappingId: Int,
-    onPress: (Int) -> Unit,
-    onRelease: (Int) -> Unit
+private fun GamepadStickHoldButton(
+    label: String,
+    isHeld: Boolean,
+    onToggle: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    var isPressed by remember { mutableStateOf(false) }
+    val pressOffsetY by animateDpAsState(
+        targetValue = if (isHeld) 0.6.dp else 0.dp,
+        animationSpec = tween(durationMillis = 65, easing = LinearEasing),
+        label = "stickHoldPress"
+    )
+    val pressScale by animateFloatAsState(
+        targetValue = if (isHeld) 0.95f else 1.0f,
+        animationSpec = tween(durationMillis = 65, easing = LinearEasing),
+        label = "stickHoldScale"
+    )
+
+    // Well size 30.dp, Cap size 26.dp (Hole / Inset shadow effect)
     Box(
-        modifier = Modifier
-            .width(180.dp)
-            .height(75.dp)
-            .clip(RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp, topStart = 4.dp, topEnd = 4.dp))
-            .background(Color(0xFF22252A))
-            .gamepadButtonTouch(
-                onPress = { onPress(mappingId) },
-                onRelease = { onRelease(mappingId) },
-                onPressedStateChange = { isPressed = it }
-            ),
+        modifier = modifier
+            .size(30.dp),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val w = size.width
-            val h = size.height
-            
-            val glowColor = Color(0xFF00B0FF).copy(alpha = if (isPressed) 0.9f else 0.45f)
-            
-            drawLine(glowColor, start = Offset(2.dp.toPx(), 4.dp.toPx()), end = Offset(2.dp.toPx(), h - 8.dp.toPx()), strokeWidth = 2.5.dp.toPx())
-            drawLine(glowColor, start = Offset(w - 2.dp.toPx(), 4.dp.toPx()), end = Offset(w - 2.dp.toPx(), h - 8.dp.toPx()), strokeWidth = 2.5.dp.toPx())
-            
-            drawCircle(Color.White.copy(alpha = 0.04f), radius = 2.dp.toPx(), center = Offset(w / 2f, h / 2f))
+        // 1. Dark Button Well (Hole Inset)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(CircleShape)
+                .background(Color(0xFF171718))
+                .border(0.8.dp, Color.Black.copy(alpha = 0.5f), CircleShape)
+        )
+
+        // 2. 3D Circular Button Cap
+        Box(
+            modifier = Modifier
+                .size(26.dp)
+                .offset(y = pressOffsetY)
+                .graphicsLayer {
+                    scaleX = pressScale
+                    scaleY = pressScale
+                }
+                .clip(CircleShape)
+                .clickable { onToggle(!isHeld) },
+            contentAlignment = Alignment.Center
+        ) {
+            val baseColor = if (isHeld) Color(0xFF3A3A3E) else Color(0xFF28282B)
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val r = size.width / 2f
+
+                val maxOffset = 0.6.dp.toPx()
+                val edgeOffset = if (isHeld) 0.2.dp.toPx() else 1.5.dp.toPx()
+                val faceOffset = if (isHeld) 0f else maxOffset
+
+                val edgeR = r - edgeOffset / 2f - 0.5.dp.toPx()
+                val faceR = r - maxOffset - 0.5.dp.toPx()
+
+                // 3D Side shadow edge
+                drawCircle(
+                    color = Color(0xFF161618),
+                    radius = edgeR,
+                    center = Offset(r, r + edgeOffset / 2f)
+                )
+
+                // Top face gradient
+                drawCircle(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(baseColor.gpLighter(0.10f), baseColor.gpDarker(0.12f))
+                    ),
+                    radius = faceR,
+                    center = Offset(r, r - faceOffset)
+                )
+
+                // Top bevel highlight / active border
+                drawCircle(
+                    color = if (isHeld) Color(0xFFE5E5EA) else Color.White.copy(alpha = 0.15f),
+                    radius = faceR - 0.5.dp.toPx(),
+                    center = Offset(r, r - faceOffset),
+                    style = Stroke(width = if (isHeld) 1.dp.toPx() else 0.8.dp.toPx())
+                )
+            }
+
+            // Centered Text "L3" / "R3"
+            Text(
+                text = label,
+                color = if (isHeld) Color(0xFFFFFFFF) else Color.White.copy(alpha = 0.70f),
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.ExtraBold,
+                fontFamily = FontFamily.SansSerif,
+                textAlign = TextAlign.Center
+            )
         }
     }
 }
@@ -1920,84 +2049,100 @@ private fun PlayStationTouchpad(
 private fun GamepadAnalogStick(
     label: String,
     isClicked: Boolean,
+    modifier: Modifier = Modifier,
+    isHeld: Boolean = false,
     onMove: (Float, Float) -> Unit,
     onStickClick: () -> Unit,
-    modifier: Modifier = Modifier
+    onToggleHold: ((Boolean) -> Unit)? = null
 ) {
-    var stickOffsetX by remember { mutableStateOf(0f) }
-    var stickOffsetY by remember { mutableStateOf(0f) }
+    var stickOffsetX by remember { mutableFloatStateOf(0f) }
+    var stickOffsetY by remember { mutableFloatStateOf(0f) }
     var isTouchActive by remember { mutableStateOf(false) }
 
+    val currentIsHeld by rememberUpdatedState(isHeld)
+    val currentOnStickClick by rememberUpdatedState(onStickClick)
+    val currentOnMove by rememberUpdatedState(onMove)
+
     val stickScale by animateFloatAsState(
-        targetValue = if (isClicked) 0.90f else 1.0f,
+        targetValue = if (isClicked || isHeld) 0.90f else 1.0f,
         animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "stickScale"
     )
 
     Box(
-        modifier = modifier
-            .size(90.dp)
-            .pointerInput(Unit) {
-                val baseRadius = size.width / 2f
-                val maxRadius = 20.dp.toPx() // Cylindrical stem hits gate limit
-                val tapSlopPx = 8f
-
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    isTouchActive = true
-                    val pointerId = down.id
-                    val downTime = System.currentTimeMillis()
-                    
-                    val updateStickOffset = { pos: Offset ->
-                        val dx = pos.x - down.position.x
-                        val dy = pos.y - down.position.y
-                        val dist = sqrt(dx * dx + dy * dy)
-                        if (dist <= maxRadius) {
-                            stickOffsetX = dx
-                            stickOffsetY = dy
-                        } else {
-                            stickOffsetX = (dx / dist) * maxRadius
-                            stickOffsetY = (dy / dist) * maxRadius
-                        }
-                        onMove(stickOffsetX / maxRadius, stickOffsetY / maxRadius)
-                    }
-
-                    // Initialize to center (no jump on touch down)
-                    stickOffsetX = 0f
-                    stickOffsetY = 0f
-                    onMove(0f, 0f)
-                    
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == pointerId } ?: break
-
-                        if (!change.pressed) {
-                            isTouchActive = false
-                            val dragDistance = sqrt((change.position.x - down.position.x) * (change.position.x - down.position.x) + 
-                                                    (change.position.y - down.position.y) * (change.position.y - down.position.y))
-                            if (dragDistance < tapSlopPx && System.currentTimeMillis() - downTime < 250) {
-                                onStickClick()
-                            }
-                            // Spring back
-                            stickOffsetX = 0f
-                            stickOffsetY = 0f
-                            onMove(0f, 0f)
-                            break
-                        }
-
-                        change.consume()
-                        updateStickOffset(change.position)
-                    }
-                }
-            },
+        modifier = modifier.size(108.dp),
         contentAlignment = Alignment.Center
     ) {
+        Box(
+            modifier = Modifier
+                .size(90.dp)
+                .pointerInput(Unit) {
+                    val centerPx = size.width / 2f
+                    val maxInputRadius = 32.dp.toPx()  // Wide linear touch response radius
+                    val maxVisualRadius = 22.dp.toPx() // Clean visual cap travel boundary
+                    val tapSlopPx = 8f
+
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        isTouchActive = true
+                        val pointerId = down.id
+                        val downTime = System.currentTimeMillis()
+
+                        val updateStickOffset = { pos: Offset ->
+                            val dx = pos.x - centerPx
+                            val dy = pos.y - centerPx
+                            val dist = sqrt(dx * dx + dy * dy)
+
+                            if (dist == 0f) {
+                                stickOffsetX = 0f
+                                stickOffsetY = 0f
+                                currentOnMove(0f, 0f)
+                            } else {
+                                val normDist = (dist / maxInputRadius).coerceIn(0f, 1f)
+                                val normalizedX = (dx / dist) * normDist
+                                val normalizedY = (dy / dist) * normDist
+
+                                val visualDist = dist.coerceAtMost(maxVisualRadius)
+                                stickOffsetX = (dx / dist) * visualDist
+                                stickOffsetY = (dy / dist) * visualDist
+
+                                currentOnMove(normalizedX, normalizedY)
+                            }
+                        }
+
+                        updateStickOffset(down.position)
+
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+
+                            if (!change.pressed) {
+                                isTouchActive = false
+                                val dragDistance = sqrt((change.position.x - down.position.x) * (change.position.x - down.position.x) + 
+                                                        (change.position.y - down.position.y) * (change.position.y - down.position.y))
+
+                                if (dragDistance < tapSlopPx && System.currentTimeMillis() - downTime < 250) {
+                                    if (!currentIsHeld) {
+                                        currentOnStickClick()
+                                    }
+                                }
+                                stickOffsetX = 0f
+                                stickOffsetY = 0f
+                                currentOnMove(0f, 0f)
+                                break
+                            }
+
+                            change.consume()
+                            updateStickOffset(change.position)
+                        }
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
         // 1. Analog Stick Base Well (neumorphic molding & concentric rings)
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
-            val cx = w / 2f
-            val cy = w / 2f
-            
+
             // Neumorphic outer lip molding (top-left highlight, bottom-right shadow)
             drawCircle(
                 brush = Brush.linearGradient(
@@ -2132,16 +2277,29 @@ private fun GamepadAnalogStick(
                 )
             }
         }
+        }
+
+        // 2. L3 / R3 Hold Toggle positioned at TOP-LEFT of joystick
+        if (onToggleHold != null) {
+            GamepadStickHoldButton(
+                label = if (label == "L") "L3" else "R3",
+                isHeld = isHeld,
+                onToggle = onToggleHold,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = (-10).dp, y = (-10).dp)
+            )
+        }
     }
 }
 
 @Composable
 private fun GamepadDpad(
-    isXboxStyle: Boolean,
+    @Suppress("UNUSED_PARAMETER") isXboxStyle: Boolean,
     onDpadChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var activeDirection by remember { mutableStateOf(0) }
+    var activeDirection by remember { mutableIntStateOf(0) }
     
     // Physical tilt based on pressed direction (pure pivot rotation)
     var targetRotX = 0f
@@ -2187,16 +2345,16 @@ private fun GamepadDpad(
         // 1. Stationary Background Well (Casing hole remains static)
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
-            val barW_well = w * 0.36f
-            val startOff_well = (w - barW_well) / 2f
+            val barWWell = w * 0.36f
+            val startOffWell = (w - barWWell) / 2f
             
             val path1 = androidx.compose.ui.graphics.Path().apply {
                 addRoundRect(
                     androidx.compose.ui.geometry.RoundRect(
                         left = w * 0.02f,
-                        top = startOff_well,
+                        top = startOffWell,
                         right = w * 0.98f,
-                        bottom = startOff_well + barW_well,
+                        bottom = startOffWell + barWWell,
                         cornerRadius = androidx.compose.ui.geometry.CornerRadius(8.dp.toPx())
                     )
                 )
@@ -2204,9 +2362,9 @@ private fun GamepadDpad(
             val path2 = androidx.compose.ui.graphics.Path().apply {
                 addRoundRect(
                     androidx.compose.ui.geometry.RoundRect(
-                        left = startOff_well,
+                        left = startOffWell,
                         top = w * 0.02f,
-                        right = startOff_well + barW_well,
+                        right = startOffWell + barWWell,
                         bottom = w * 0.98f,
                         cornerRadius = androidx.compose.ui.geometry.CornerRadius(8.dp.toPx())
                     )
@@ -2430,11 +2588,24 @@ private fun determineDpadBit(x: Float, y: Float, totalSize: Float): Int {
     val dy = y - center
     val distance = sqrt(dx * dx + dy * dy)
     if (distance < totalSize * 0.08f) return 0
-    return if (Math.abs(dx) > Math.abs(dy)) {
-        if (dx > 0) 8 else 4
-    } else {
-        if (dy > 0) 2 else 1
+
+    var mask = 0
+    // Threshold distance for diagonal combined directions
+    val sectorThreshold = distance * 0.38f
+
+    if (dy < -sectorThreshold) mask = mask or 1 // UP
+    if (dy > sectorThreshold) mask = mask or 2  // DOWN
+    if (dx < -sectorThreshold) mask = mask or 4 // LEFT
+    if (dx > sectorThreshold) mask = mask or 8  // RIGHT
+
+    if (mask == 0) {
+        mask = if (abs(dx) > abs(dy)) {
+            if (dx > 0) 8 else 4
+        } else {
+            if (dy > 0) 2 else 1
+        }
     }
+    return mask
 }
 
 @Composable
@@ -2455,7 +2626,7 @@ private fun EditableComponentWrapper(
     val currentOnOffsetChange by rememberUpdatedState(onOffsetChange)
     val currentOnScaleChange by rememberUpdatedState(onScaleChange)
     
-    var layoutTopInWindowPx by remember { mutableStateOf(0f) }
+    var layoutTopInWindowPx by remember { mutableFloatStateOf(0f) }
     
     Box(
         modifier = Modifier
@@ -2496,7 +2667,7 @@ private fun EditableComponentWrapper(
                     )
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f), shape = RoundedCornerShape(8.dp))
                     .pointerInput(Unit) {
-                        detectTransformGestures { centroid, pan, zoom, rotation ->
+                        detectTransformGestures { _, pan, zoom, _ ->
                             // 1. Update scale via pinch zoom
                             val newScale = (currentScale * zoom).coerceIn(0.6f, 1.8f)
                             currentOnScaleChange(newScale)

@@ -13,6 +13,7 @@ import dev.arnv.bluke.ui.HomeScreen
 
 class MainActivity : ComponentActivity() {
     companion object {
+        @android.annotation.SuppressLint("StaticFieldLeak")
         private var btManagerInstance: BluetoothKeyboardManager? = null
     }
 
@@ -29,18 +30,24 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        val sharedPrefs = getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+        val sharedPrefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
         if (!sharedPrefs.getBoolean("has_seen_onboarding", false)) {
             startActivity(android.content.Intent(this, OnboardingActivity::class.java))
             finish()
             return
         }
 
-        // Initialize or reuse services
+        // Initialize or reuse services safely against missing HID framework classes
         if (btManagerInstance == null) {
-            btManagerInstance = BluetoothKeyboardManager(applicationContext)
+            try {
+                btManagerInstance = BluetoothKeyboardManager(applicationContext)
+            } catch (e: Throwable) {
+                android.util.Log.e("MainActivity", "Failed to initialize BluetoothKeyboardManager", e)
+            }
         }
-        btManager = btManagerInstance!!
+        if (btManagerInstance != null) {
+            btManager = btManagerInstance!!
+        }
 
         soundSynth = KeyboardSoundSynthesizer(applicationContext)
 
@@ -63,7 +70,7 @@ class MainActivity : ComponentActivity() {
 
         enableEdgeToEdge()
         setContent {
-            MyApplicationTheme() {
+            MyApplicationTheme {
                 HomeScreen(
                     btManager = btManager,
                     soundSynth = soundSynth

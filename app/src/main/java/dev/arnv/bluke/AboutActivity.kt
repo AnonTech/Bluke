@@ -1,7 +1,6 @@
 package dev.arnv.bluke
 
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -15,8 +14,6 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BugReport
@@ -28,7 +25,6 @@ import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.Alignment
@@ -37,7 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import dev.arnv.bluke.R
+import androidx.core.net.toUri
 import dev.arnv.bluke.ui.SettingsGroup
 import dev.arnv.bluke.ui.SettingsCardGroup
 import dev.arnv.bluke.ui.SettingsItemData
@@ -52,7 +48,7 @@ class AboutActivity : ComponentActivity() {
         val versionName = try {
             val packageInfo = packageManager.getPackageInfo(packageName, 0)
             packageInfo.versionName ?: "1.0.1"
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             "1.0.1"
         }
         
@@ -60,7 +56,7 @@ class AboutActivity : ComponentActivity() {
             MyApplicationTheme {
                 val context = LocalContext.current
                 fun openUrl(url: String) {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
                 }
                 
                 // Compute shapes separately to avoid sharing a stateful Shape instance across different sizes, which causes layout/shrinking bugs on activity resume.
@@ -280,7 +276,7 @@ class AboutActivity : ComponentActivity() {
                                     title = "Licenses",
                                     subtitle = "View the licenses that the app and libraries are using",
                                     icon = { Icon(Icons.Default.Policy, null, tint = MaterialTheme.colorScheme.primary) },
-                                    onClick = { startActivity(android.content.Intent(this@AboutActivity, LicensesActivity::class.java)) }
+                                    onClick = { startActivity(Intent(this@AboutActivity, LicensesActivity::class.java)) }
                                 ),
                                 SettingsItemData(
                                     title = "Report issue",

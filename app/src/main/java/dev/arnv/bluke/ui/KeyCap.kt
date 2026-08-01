@@ -1,12 +1,9 @@
 package dev.arnv.bluke.ui
-import dev.arnv.bluke.ui.theme.*
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,9 +16,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-
-
-
 @Composable
 fun KeyCap(
     legend: String,
@@ -32,9 +26,8 @@ fun KeyCap(
     keyBgColor: Color,
     legendColor: Color,
     baseUnitWidth: androidx.compose.ui.unit.Dp,
-    glowColor: Color? = null,
-    isReactive: Boolean = false,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    glowColor: Color? = null
 ) {
     val keyBorderColor = keyBgColor.darker()
     

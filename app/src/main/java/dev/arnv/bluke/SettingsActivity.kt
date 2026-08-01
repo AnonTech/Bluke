@@ -1,6 +1,6 @@
 package dev.arnv.bluke
 
-import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,7 +11,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
@@ -61,7 +60,7 @@ class SettingsActivity : ComponentActivity() {
                                     subtitle = "Dynamic colors, Dark theme, Haptics",
                                     icon = { Icon(Icons.Default.ColorLens, null, tint = MaterialTheme.colorScheme.primary) },
                                     onClick = { 
-                                        startActivity(android.content.Intent(this@SettingsActivity, LookAndFeelActivity::class.java))
+                                        startActivity(Intent(this@SettingsActivity, LookAndFeelActivity::class.java))
                                     }
                                 ),
                                 SettingsItemData(
@@ -69,7 +68,7 @@ class SettingsActivity : ComponentActivity() {
                                     subtitle = "Modify certain behavior of the app",
                                     icon = { Icon(Icons.Default.Settings, null, tint = MaterialTheme.colorScheme.primary) },
                                     onClick = { 
-                                        startActivity(android.content.Intent(this@SettingsActivity, BehaviorActivity::class.java))
+                                        startActivity(Intent(this@SettingsActivity, BehaviorActivity::class.java))
                                     }
                                 ),
                                 SettingsItemData(
@@ -77,7 +76,7 @@ class SettingsActivity : ComponentActivity() {
                                     subtitle = "Contributors and support",
                                     icon = { Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.primary) },
                                     onClick = { 
-                                        startActivity(android.content.Intent(this@SettingsActivity, AboutActivity::class.java))
+                                        startActivity(Intent(this@SettingsActivity, AboutActivity::class.java))
                                     }
                                 )
                             )

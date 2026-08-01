@@ -1,6 +1,5 @@
 package dev.arnv.bluke
 
-import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -30,21 +29,23 @@ import dev.arnv.bluke.ui.theme.AccentColors
 import dev.arnv.bluke.ui.theme.getCookieShape
 import kotlinx.coroutines.launch
 
+import androidx.core.content.edit
+
 class LookAndFeelActivity : ComponentActivity() {
-    private val themeModeState = mutableStateOf(0)
+    private val themeModeState = mutableIntStateOf(0)
 
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        val sharedPrefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        val sharedPrefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
         val isDynamicColorDefault = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-        themeModeState.value = sharedPrefs.getInt("theme_mode", 0)
+        themeModeState.intValue = sharedPrefs.getInt("theme_mode", 0)
         
         setContent {
             MyApplicationTheme {
                 var dynamicColor by remember { mutableStateOf(sharedPrefs.getBoolean("dynamic_color", isDynamicColorDefault)) }
-                var accentColorIndex by remember { mutableStateOf(sharedPrefs.getInt("accent_color_index", 0)) }
+                var accentColorIndex by remember { mutableIntStateOf(sharedPrefs.getInt("accent_color_index", 0)) }
                 var paletteStyleState by remember { mutableStateOf(sharedPrefs.getString("palette_style", "Tonal Spot") ?: "Tonal Spot") }
                 
                 var hapticsEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("haptics_enabled", true)) }
@@ -120,7 +121,7 @@ class LookAndFeelActivity : ComponentActivity() {
                                                         .background(color)
                                                         .clickable {
                                                             accentColorIndex = index
-                                                            sharedPrefs.edit().putInt("accent_color_index", index).apply()
+                                                            sharedPrefs.edit { putInt("accent_color_index", index) }
                                                         },
                                                     contentAlignment = Alignment.Center
                                                 ) {
@@ -143,14 +144,14 @@ class LookAndFeelActivity : ComponentActivity() {
                                 
                                 Spacer(modifier = Modifier.height(16.dp))
                                 
-                                val CookieShape7 = getCookieShape(7)
-                                val PebbleShape = androidx.compose.foundation.shape.RoundedCornerShape(percent = 35)
-                                val ArchShapeRound = androidx.compose.foundation.shape.RoundedCornerShape(
+                                val cookieShape7 = getCookieShape(7)
+                                val pebbleShape = androidx.compose.foundation.shape.RoundedCornerShape(percent = 35)
+                                val archShapeRound = androidx.compose.foundation.shape.RoundedCornerShape(
                                     topStart = 16.dp, topEnd = 16.dp, bottomStart = 4.dp, bottomEnd = 4.dp
                                 )
-                                val CookieShape5 = getCookieShape(5)
+                                val cookieShape5 = getCookieShape(5)
 
-                                val paginationShapes = listOf(CookieShape7, PebbleShape, ArchShapeRound, CookieShape5)
+                                val paginationShapes = listOf(cookieShape7, pebbleShape, archShapeRound, cookieShape5)
                                 val coroutineScope = rememberCoroutineScope()
 
                                 Row(
@@ -162,7 +163,7 @@ class LookAndFeelActivity : ComponentActivity() {
                                         val isSelected = pagerState.currentPage == iteration
                                         val color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
                                         val shape = if (isSelected) {
-                                            paginationShapes.getOrElse(iteration) { CookieShape7 }
+                                            paginationShapes.getOrElse(iteration) { cookieShape7 }
                                         } else {
                                             CircleShape
                                         }
@@ -197,7 +198,7 @@ class LookAndFeelActivity : ComponentActivity() {
                                             enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S,
                                             onCheckedChange = { 
                                                 dynamicColor = it
-                                                sharedPrefs.edit().putBoolean("dynamic_color", it).apply()
+                                                sharedPrefs.edit { putBoolean("dynamic_color", it) }
                                             }
                                         )
                                     }
@@ -222,7 +223,7 @@ class LookAndFeelActivity : ComponentActivity() {
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 modifier = Modifier.fillMaxWidth().clickable { 
                                                     paletteStyleState = option
-                                                    sharedPrefs.edit().putString("palette_style", option).apply()
+                                                    sharedPrefs.edit { putString("palette_style", option) }
                                                     showPaletteDialog = false 
                                                 }.padding(vertical = 8.dp)
                                             ) {
@@ -266,7 +267,7 @@ class LookAndFeelActivity : ComponentActivity() {
                                             checked = hapticsEnabled,
                                             onCheckedChange = { 
                                                 hapticsEnabled = it
-                                                sharedPrefs.edit().putBoolean("haptics_enabled", it).apply()
+                                                sharedPrefs.edit { putBoolean("haptics_enabled", it) }
                                             }
                                         )
                                     }
@@ -280,8 +281,10 @@ class LookAndFeelActivity : ComponentActivity() {
                                             checked = keySoundEnabled,
                                             onCheckedChange = { 
                                                 keySoundEnabled = it
-                                                sharedPrefs.edit().putBoolean("key_sound_enabled", it).apply()
-                                                sharedPrefs.edit().putBoolean("sound_toggle", it).apply() 
+                                                sharedPrefs.edit {
+                                                    putBoolean("key_sound_enabled", it)
+                                                    putBoolean("sound_toggle", it)
+                                                }
                                             }
                                         )
                                     }
@@ -297,7 +300,7 @@ class LookAndFeelActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        val sharedPrefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-        themeModeState.value = sharedPrefs.getInt("theme_mode", 0)
+        val sharedPrefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
+        themeModeState.intValue = sharedPrefs.getInt("theme_mode", 0)
     }
 }

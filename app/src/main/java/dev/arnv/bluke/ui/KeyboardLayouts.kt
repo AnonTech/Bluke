@@ -1,6 +1,5 @@
 package dev.arnv.bluke.ui
 
-import dev.arnv.bluke.ui.theme.*
 import androidx.compose.ui.graphics.Color
 
 enum class KeyColorCategory {
@@ -399,7 +398,6 @@ object KeyboardLayouts {
             }
             
             var currentX = 0.0f
-            var formatNextKey = false
             val currentRow = mutableListOf<KeyLayoutInfo>()
             
             while (index < length) {
@@ -439,19 +437,17 @@ object KeyboardLayouts {
                             }
                         }
                     }
-                    formatNextKey = true
                 } else if (nextChar == '"' || nextChar == '\'') {
-                    val quoteChar = nextChar
                     index++
                     val strStart = index
                     var escaped = false
                     while (index < length) {
-                        if (kle[index] == '\\' && !escaped) {
-                            escaped = true
-                        } else if (kle[index] == quoteChar && !escaped) {
+                        escaped = if (kle[index] == '\\' && !escaped) {
+                            true
+                        } else if (kle[index] == nextChar && !escaped) {
                             break
                         } else {
-                            escaped = false
+                            false
                         }
                         index++
                     }
@@ -485,7 +481,6 @@ object KeyboardLayouts {
                     currentX += keyW
                     keyW = 1.0f
                     keyH = 1.0f
-                    formatNextKey = false
                 } else {
                     index++
                 }
@@ -498,8 +493,7 @@ object KeyboardLayouts {
     }
 
     private fun getKeycodeForLegend(legend: String): Int {
-        val clean = legend.trim().lowercase()
-        return when (clean) {
+        return when (val clean = legend.trim().lowercase()) {
             "esc" -> KEY_ESC
             "f1" -> KEY_F1
             "f2" -> KEY_F2
@@ -563,8 +557,7 @@ object KeyboardLayouts {
             "/" -> KEY_SLASH
             else -> {
                 if (clean.length == 1) {
-                    val c = clean[0]
-                    when (c) {
+                    when (val c = clean[0]) {
                         in 'a'..'z' -> KEY_A + (c - 'a')
                         in '0'..'9' -> {
                             if (c == '0') KEY_0 else KEY_1 + (c - '1')
