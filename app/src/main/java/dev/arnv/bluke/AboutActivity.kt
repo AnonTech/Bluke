@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.animation.core.Spring
@@ -62,6 +63,9 @@ class AboutActivity : ComponentActivity() {
                 // Compute shapes separately to avoid sharing a stateful Shape instance across different sizes, which causes layout/shrinking bugs on activity resume.
                 val logoShape = getCookieShape(7)
                 val developerShape = getCookieShape(7)
+                
+                var clickCount by remember { mutableIntStateOf(0) }
+                val sharedPrefs = context.getSharedPreferences("app_prefs", MODE_PRIVATE)
 
                 val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
 
@@ -96,7 +100,20 @@ class AboutActivity : ComponentActivity() {
                         Surface(
                             shape = logoShape,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(100.dp)
+                            modifier = Modifier
+                                .size(100.dp)
+                                .clickable(
+                                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                    indication = null // Hide ripple for secret click
+                                ) {
+                                    clickCount++
+                                    if (clickCount == 5) {
+                                        sharedPrefs.edit().putBoolean("is_developer_mode", true).apply()
+                                        android.widget.Toast.makeText(context, "You are now a developer!", android.widget.Toast.LENGTH_SHORT).show()
+                                    } else if (clickCount > 5 && clickCount % 3 == 0) {
+                                        android.widget.Toast.makeText(context, "No need, you are already a developer.", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                }
                         ) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_launcher_foreground),

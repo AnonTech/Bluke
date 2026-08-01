@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -56,6 +57,7 @@ class OnboardingActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         
         setContent {
             MyApplicationTheme {
@@ -65,6 +67,7 @@ class OnboardingActivity : ComponentActivity() {
                         prefs.edit {
                             putBoolean("has_seen_onboarding", true)
                             putBoolean("has_seen_help", true)
+                            putInt("last_run_version_code", dev.arnv.bluke.BuildConfig.VERSION_CODE)
                         }
                         startActivity(Intent(this@OnboardingActivity, MainActivity::class.java))
                         finish()
@@ -153,6 +156,7 @@ fun OnboardingScreen(
     }
 
     Scaffold(
+        modifier = Modifier.fillMaxSize().navigationBarsPadding().statusBarsPadding(),
         bottomBar = {
             Surface(
                 color = MaterialTheme.colorScheme.surface,

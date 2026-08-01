@@ -38,6 +38,8 @@ class MainActivity : ComponentActivity() {
         }
 
         // Initialize or reuse services safely against missing HID framework classes
+        dev.arnv.bluke.utils.DeveloperLogManager.init(applicationContext)
+        
         if (btManagerInstance == null) {
             try {
                 btManagerInstance = BluetoothKeyboardManager(applicationContext)

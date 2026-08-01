@@ -83,6 +83,8 @@ fun HomeScreen(
     // Mute state
     var isMuted by rememberSaveable { mutableStateOf(!sharedPrefs.getBoolean("key_sound_enabled", true)) }
 
+    var devModeRefreshTrigger by remember { mutableIntStateOf(0) }
+
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -108,6 +110,7 @@ fun HomeScreen(
                 }.ifEmpty { listOf(0) }
                 val savedLaunchMode = sharedPrefs.getInt("launch_mode", 0)
                 launchMode = if (enabledModes.contains(savedLaunchMode)) savedLaunchMode else enabledModes.first()
+                devModeRefreshTrigger++
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -118,7 +121,16 @@ fun HomeScreen(
 
     
     // Bluetooth status flows
-    val btState by btManager.serviceState.collectAsState()
+    val realBtState by btManager.serviceState.collectAsState()
+    
+    val btState = remember(realBtState, devModeRefreshTrigger) {
+        if (sharedPrefs.getBoolean("is_developer_mode", false)) {
+            if (sharedPrefs.getBoolean("mock_bt_disabled", false)) return@remember dev.arnv.bluke.bluetooth.BluetoothState.BluetoothOff
+            if (sharedPrefs.getBoolean("mock_device_unsupported", false)) return@remember dev.arnv.bluke.bluetooth.BluetoothState.Unsupported
+            if (sharedPrefs.getBoolean("mock_hid_unsupported", false)) return@remember dev.arnv.bluke.bluetooth.BluetoothState.ProfileNotSupported
+        }
+        realBtState
+    }
     val btMessage by btManager.statusMessage.collectAsState()
     
 
@@ -129,6 +141,56 @@ fun HomeScreen(
     
     // Active pressed keys set for visually pressing keycaps
     val activePressedKeys = remember { mutableStateListOf<Int>() }
+
+    var showUpdateDialog by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        val currentVersionCode = dev.arnv.bluke.BuildConfig.VERSION_CODE
+        val savedVersionCode = sharedPrefs.getInt("last_run_version_code", 0)
+        
+        // If they have seen onboarding, they are an existing user.
+        // If savedVersionCode < currentVersionCode, it's an update.
+        if ((savedVersionCode > 0 && savedVersionCode < currentVersionCode) || 
+            (savedVersionCode == 0 && sharedPrefs.getBoolean("has_seen_onboarding", false))) {
+            showUpdateDialog = true
+        }
+        
+        if (savedVersionCode != currentVersionCode) {
+            sharedPrefs.edit { putInt("last_run_version_code", currentVersionCode) }
+        }
+    }
+    
+    if (sharedPrefs.getBoolean("is_developer_mode", false) && sharedPrefs.getBoolean("mock_update_popup", false)) {
+        showUpdateDialog = true
+    }
+
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    if (showUpdateDialog) {
+        val versionName = dev.arnv.bluke.BuildConfig.VERSION_NAME
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { 
+                showUpdateDialog = false
+                sharedPrefs.edit { putBoolean("mock_update_popup", false) }
+            },
+            title = { Text("Updated to v$versionName") },
+            text = { Text("We've added new features and made significant underlying changes to the controller!\nFor detailed information, see the changelog.\n\n⚠️ IMPORTANT: Because the Bluetooth profiles have updated, you MUST completely unpair and remove Bluke and re-pair it on the phone and the target device. If you don't do this, the controller may not function properly and you will experience bugs.") },
+            confirmButton = {
+                Button(onClick = { 
+                    showUpdateDialog = false 
+                    sharedPrefs.edit { putBoolean("mock_update_popup", false) }
+                }) {
+                    Text("Got it")
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { 
+                    uriHandler.openUri("https://github.com/arnav-kr/Bluke/releases")
+                }) {
+                    Text("Changelog")
+                }
+            }
+        )
+    }
 
     // Connection helper declared at outer scope
     val isConnected = btState is BluetoothState.Connected
@@ -814,7 +876,7 @@ fun HomeScreen(
                         .padding(top = innerPadding.calculateTopPadding())
                         .background(MaterialTheme.colorScheme.background)
                 ) {
-                    if (btState is BluetoothState.BluetoothOff || btState is BluetoothState.Unsupported) {
+                    if (btState is BluetoothState.BluetoothOff || btState is BluetoothState.Unsupported || btState is BluetoothState.ProfileNotSupported) {
                         Column(
                             modifier = Modifier.fillMaxSize().padding(32.dp),
                             verticalArrangement = Arrangement.Center,
@@ -830,6 +892,7 @@ fun HomeScreen(
                             Text(
                                 text = when (btState) {
                                     is BluetoothState.Unsupported -> "Bluetooth Not Supported"
+                                    is BluetoothState.ProfileNotSupported -> "HID Profile Not Supported"
                                     else -> "Bluetooth is Off"
                                 },
                                 style = MaterialTheme.typography.headlineSmall,
@@ -838,27 +901,51 @@ fun HomeScreen(
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
                             )
                             Spacer(Modifier.height(12.dp))
-                            Text(
-                                text = when (btState) {
-                                    is BluetoothState.Unsupported -> "This device does not have Bluetooth hardware."
-                                    else -> "Please enable Bluetooth to connect devices."
-                                },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            )
+                            if (btState is BluetoothState.ProfileNotSupported) {
+                                Text(
+                                    text = "Your device's Bluetooth firmware does not support HID Device mode, which Bluke requires to act as a keyboard, mouse, or gamepad.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = "This is a manufacturer limitation and cannot be fixed by the app.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            } else {
+                                Text(
+                                    text = when (btState) {
+                                        is BluetoothState.Unsupported -> "This device does not have Bluetooth hardware."
+                                        else -> "Please enable Bluetooth to connect devices."
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
                             Spacer(Modifier.height(32.dp))
-                             if (btState is BluetoothState.BluetoothOff) {
-                                 Button(
-                                     onClick = {
-                                         val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-                                         btLauncher.launch(enableBtIntent)
-                                     },
-                                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                                 ) {
-                                     Text("Turn On Bluetooth")
-                                 }
-                             }
+                            if (btState is BluetoothState.BluetoothOff) {
+                                Button(
+                                    onClick = {
+                                        val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+                                        btLauncher.launch(enableBtIntent)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                ) {
+                                    Text("Turn On Bluetooth")
+                                }
+                            } else if (btState is BluetoothState.ProfileNotSupported) {
+                                OutlinedButton(
+                                    onClick = { btManager.checkBluetoothCapabilities() }
+                                ) {
+                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Retry")
+                                }
+                            }
                         }
                     } else {
                         var isPairedExpanded by rememberSaveable { mutableStateOf(true) }
@@ -978,7 +1065,27 @@ fun HomeScreen(
                                             }
                                         }
                                         
-                                        // Removed manual fallback button - system now handles it via robust coroutine state machine
+                                        if (btState is BluetoothState.ReadyDisconnected || btMessage.lowercase().contains("failed") || btMessage.lowercase().contains("error")) {
+                                            Spacer(modifier = Modifier.height(12.dp))
+                                            Button(
+                                                onClick = { btManager.restartHidService() },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                shape = CircleShape,
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                                ),
+                                                contentPadding = PaddingValues(vertical = 12.dp, horizontal = 20.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Refresh,
+                                                    contentDescription = "Restart HID",
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text("Restart HID Service", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
+                                            }
+                                        }
                                     }
                                 }
                             }

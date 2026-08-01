@@ -16,6 +16,8 @@ import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import dev.arnv.bluke.utils.DeveloperLogManager
+import dev.arnv.bluke.utils.LogType
 import androidx.core.content.edit
 import java.util.concurrent.Executors
 import kotlinx.coroutines.CoroutineScope
@@ -55,6 +57,11 @@ class BluetoothKeyboardManager(private val context: Context) {
         if (hid != null) {
             reportExecutor.submit {
                 try {
+                    DeveloperLogManager.log(
+                        "BluetoothKeyboard",
+                        "sendReport ID=0x${reportId.toString(16)} Data=[${report.joinToString(" ") { String.format("%02X", it) }}]",
+                        LogType.BLUETOOTH_PACKET
+                    )
                     hid.sendReport(dev, reportId, report)
                 } catch (e: Exception) {
                     Log.e("BluetoothKeyboard", "Error transmitting HID report ID $reportId", e)
@@ -112,6 +119,7 @@ class BluetoothKeyboardManager(private val context: Context) {
 
     private val managerScope = CoroutineScope(Dispatchers.IO + Job())
     private val appRegistrationState = MutableStateFlow(false)
+    @Volatile private var isRegisteringInProcess = false
     private val isAppRegistered: Boolean get() = appRegistrationState.value
     private val connectionStateFlow = MutableSharedFlow<Pair<BluetoothDevice, Int>>(
         extraBufferCapacity = 1,
@@ -306,8 +314,8 @@ class BluetoothKeyboardManager(private val context: Context) {
         0x05.toByte(), 0x01.toByte(),         //     USAGE_PAGE (Generic Desktop)
         0x09.toByte(), 0x30.toByte(),         //     USAGE (X) - Left Stick X
         0x09.toByte(), 0x31.toByte(),         //     USAGE (Y) - Left Stick Y
-        0x09.toByte(), 0x33.toByte(),         //     USAGE (Rx) - Right Stick X
-        0x09.toByte(), 0x34.toByte(),         //     USAGE (Ry) - Right Stick Y
+        0x09.toByte(), 0x32.toByte(),         //     USAGE (Rx) - Right Stick X
+        0x09.toByte(), 0x33.toByte(),         //     USAGE (Ry) - Right Stick Y
         0x15.toByte(), 0x00.toByte(),         //     LOGICAL_MINIMUM (0)
         0x27.toByte(), 0xff.toByte(), 0xff.toByte(), 0x00.toByte(), 0x00.toByte(), // LOGICAL_MAXIMUM (65535)
         0x75.toByte(), 0x10.toByte(),         //     REPORT_SIZE (16)
@@ -650,23 +658,34 @@ class BluetoothKeyboardManager(private val context: Context) {
             _statusMessage.value = "Bluetooth HID Device profile requires Android 9 (API 28) or higher."
             return
         }
-        try {
+        
+        managerScope.launch {
             val hidDeviceProfileConst = 19 // BluetoothProfile.HID_DEVICE is 19
-            val success = bluetoothAdapter?.getProfileProxy(
-                context,
-                profileListener,
-                hidDeviceProfileConst
-            ) ?: false
+            var success = false
+            for (attempt in 1..3) {
+                try {
+                    success = bluetoothAdapter?.getProfileProxy(
+                        context,
+                        profileListener,
+                        hidDeviceProfileConst
+                    ) ?: false
+                    if (success) {
+                        Log.d("BluetoothKeyboard", "getProfileProxy succeeded on attempt $attempt")
+                        break
+                    }
+                } catch (e: Throwable) {
+                    Log.w("BluetoothKeyboard", "Attempt $attempt calling getProfileProxy failed: ${e.message}")
+                }
+                if (attempt < 3) {
+                    kotlinx.coroutines.delay(500)
+                }
+            }
 
             if (!success) {
-                Log.e("BluetoothKeyboard", "getProfileProxy returned false — HID Device profile absent on this firmware")
+                Log.e("BluetoothKeyboard", "getProfileProxy returned false after 3 attempts — HID Device profile absent on this firmware")
                 _serviceState.value = BluetoothState.ProfileNotSupported
                 _statusMessage.value = "Bluetooth HID Device profile is not supported on this device."
             }
-        } catch (e: Throwable) {
-            Log.e("BluetoothKeyboard", "Error calling getProfileProxy", e)
-            _serviceState.value = BluetoothState.ProfileNotSupported
-            _statusMessage.value = "Failed to access Bluetooth HID service on this device firmware."
         }
     }
 
@@ -715,7 +734,11 @@ class BluetoothKeyboardManager(private val context: Context) {
         @SuppressLint("MissingPermission")
         override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
             super.onAppStatusChanged(pluggedDevice, registered)
+            
+            DeveloperLogManager.log("BluetoothKeyboard", "onAppStatusChanged: registered=$registered, device=${pluggedDevice?.address}")
+
             appRegistrationState.value = registered
+            isRegisteringInProcess = false
             if (registered) {
                 spoofLocalDeviceClass(bluetoothAdapter, 0x000005C0) // Spoof Class of Device to Combo Peripheral (Keyboard/Mouse)
                 updateBondedDevices()
@@ -856,6 +879,11 @@ class BluetoothKeyboardManager(private val context: Context) {
     @SuppressLint("MissingPermission")
     private fun registerApp() {
         val hid = hidDeviceProfile ?: return
+        if (isAppRegistered || isRegisteringInProcess) {
+            Log.d("BluetoothKeyboard", "registerApp skipped: already registered ($isAppRegistered) or in process ($isRegisteringInProcess)")
+            return
+        }
+        isRegisteringInProcess = true
         managerScope.launch {
             try {
                 _statusMessage.value = "Registering Bluetooth HID application profile..."
@@ -879,9 +907,24 @@ class BluetoothKeyboardManager(private val context: Context) {
                     return@launch
                 }
                 
-                val registered = hid.registerApp(settings, null, null, executor, hidCallback)
+                var registered = false
+                for (attempt in 1..3) {
+                    try {
+                        registered = hid.registerApp(settings, null, null, executor, hidCallback)
+                        if (registered) {
+                            Log.d("BluetoothKeyboard", "hid.registerApp succeeded on attempt $attempt")
+                            break
+                        }
+                    } catch (e: Exception) {
+                        Log.w("BluetoothKeyboard", "Attempt $attempt calling hid.registerApp threw exception: ${e.message}")
+                    }
+                    if (attempt < 3) {
+                        delay(400)
+                    }
+                }
+                
                 if (!registered) {
-                    Log.w("BluetoothKeyboard", "hid.registerApp returned false — BT stack may need a toggle")
+                    Log.w("BluetoothKeyboard", "hid.registerApp returned false after 3 attempts — BT stack may need a toggle")
                     _statusMessage.value = "HID registration failed. Try toggling Bluetooth off and on."
                     _serviceState.value = BluetoothState.ReadyDisconnected
                 }
@@ -889,6 +932,8 @@ class BluetoothKeyboardManager(private val context: Context) {
                 Log.e("BluetoothKeyboard", "Error during app registration", e)
                 _statusMessage.value = "Registration crash: ${e.localizedMessage}."
                 _serviceState.value = BluetoothState.ProfileNotSupported
+            } finally {
+                isRegisteringInProcess = false
             }
         }
     }

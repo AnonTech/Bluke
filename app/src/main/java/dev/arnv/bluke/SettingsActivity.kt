@@ -11,8 +11,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.unit.dp
 import dev.arnv.bluke.ui.SettingsCardGroup
 import dev.arnv.bluke.ui.SettingsItemData
@@ -25,6 +29,20 @@ class SettingsActivity : ComponentActivity() {
         
         setContent {
             MyApplicationTheme {
+                val sharedPrefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
+                val lifecycleOwner = LocalLifecycleOwner.current
+                var isDevMode by remember { mutableStateOf(sharedPrefs.getBoolean("is_developer_mode", false)) }
+
+                DisposableEffect(lifecycleOwner) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_RESUME) {
+                            isDevMode = sharedPrefs.getBoolean("is_developer_mode", false)
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                }
+                
                 val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
 
                 Scaffold(
@@ -79,7 +97,20 @@ class SettingsActivity : ComponentActivity() {
                                         startActivity(Intent(this@SettingsActivity, AboutActivity::class.java))
                                     }
                                 )
-                            )
+                            ).let { baseList ->
+                                if (isDevMode) {
+                                    baseList + SettingsItemData(
+                                        title = "Developer Options",
+                                        subtitle = "App testing and debugging",
+                                        icon = { Icon(Icons.Default.Code, null, tint = MaterialTheme.colorScheme.primary) },
+                                        onClick = { 
+                                            startActivity(Intent(this@SettingsActivity, DeveloperOptionsActivity::class.java))
+                                        }
+                                    )
+                                } else {
+                                    baseList
+                                }
+                            }
                         )
                         Spacer(Modifier.height(32.dp))
                     }
