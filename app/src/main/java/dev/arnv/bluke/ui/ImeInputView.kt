@@ -21,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -97,7 +96,6 @@ fun computeImeDiff(
  */
 @Composable
 fun ImeInputView(
-    palette: KeyboardPalette,
     isConnected: Boolean,
     hostLayout: HostLayouts.HostLayout,
     unicodeMode: UnicodeEntry.UnicodeEntryMode,
@@ -224,13 +222,21 @@ fun ImeInputView(
         queue(out)
     }
 
+    // Follows the app's light/dark theme rather than the keycap colorway: this screen is ordinary
+    // Android UI wrapping the user's own IME, not a picture of a mechanical keyboard.
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(palette.bgCode)
+            .background(MaterialTheme.colorScheme.background)
+            // The activity is edge-to-edge, so without this the header would sit under the status
+            // bar clock. imePadding keeps the key rows directly above the soft keyboard.
+            .windowInsetsPadding(WindowInsets.safeDrawing)
             .imePadding()
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -240,7 +246,7 @@ fun ImeInputView(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "System Keyboard",
-                    color = palette.alphaLegend,
+                    color = onSurface,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -253,7 +259,7 @@ fun ImeInputView(
                     } else {
                         "Not connected - nothing is being sent"
                     },
-                    color = palette.alphaLegend.copy(alpha = 0.6f),
+                    color = onSurfaceVariant,
                     fontSize = 10.sp
                 )
             }
@@ -266,7 +272,7 @@ fun ImeInputView(
                     modifier = Modifier
                         .height(30.dp)
                         .clip(RoundedCornerShape(6.dp))
-                        .background(Color.White.copy(alpha = 0.15f))
+                        .background(MaterialTheme.colorScheme.secondaryContainer)
                         .clickable {
                             keyboardController?.hide()
                             onCycleMode()
@@ -279,12 +285,12 @@ fun ImeInputView(
                     Icon(
                         imageVector = Icons.Default.Autorenew,
                         contentDescription = null,
-                        tint = Color.White,
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
                         modifier = Modifier.size(12.dp)
                     )
                     Text(
                         text = "Mode",
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -293,7 +299,7 @@ fun ImeInputView(
                     modifier = Modifier
                         .size(30.dp)
                         .clip(RoundedCornerShape(6.dp))
-                        .background(Color.White.copy(alpha = 0.15f))
+                        .background(MaterialTheme.colorScheme.secondaryContainer)
                         .clickable {
                             keyboardController?.hide()
                             onClose()
@@ -304,7 +310,7 @@ fun ImeInputView(
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Close",
-                        tint = Color.White,
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
                         modifier = Modifier.size(14.dp)
                     )
                 }
@@ -315,19 +321,25 @@ fun ImeInputView(
         // change is diffed against what the host already has.
         // Deliberately short: this is a staging line, not a document. The space it gives up goes to
         // the key rows below, which are what a physical-keyboard user actually reaches for.
+        // Uses the theme's surface/onSurface pair rather than a translucent black over a keycap
+        // legend colour, which left dark text on a dark plate in some colourways.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 56.dp, max = 96.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(Color.Black.copy(alpha = 0.35f))
-                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .border(
+                    1.dp,
+                    MaterialTheme.colorScheme.outline,
+                    RoundedCornerShape(10.dp)
+                )
                 .padding(12.dp)
         ) {
             if (fieldValue.text.isEmpty()) {
                 Text(
                     text = "Start typing with your own keyboard...",
-                    color = palette.alphaLegend.copy(alpha = 0.35f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     fontSize = 15.sp
                 )
             }
@@ -343,11 +355,11 @@ fun ImeInputView(
                     fieldValue = newValue
                 },
                 textStyle = TextStyle(
-                    color = palette.alphaLegend,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 15.sp,
                     fontFamily = FontFamily.SansSerif
                 ),
-                cursorBrush = SolidColor(palette.accentBg),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 keyboardOptions = KeyboardOptions(
                     capitalization = KeyboardCapitalization.Sentences,
                     imeAction = ImeAction.Go
@@ -377,7 +389,7 @@ fun ImeInputView(
                 } else {
                     "Skipped \"$dropped\" - ${unicodeMode.displayName} cannot express these"
                 },
-                color = Color(0xFFFFB74D),
+                color = MaterialTheme.colorScheme.error,
                 fontSize = 10.sp,
                 modifier = Modifier.testTag("ime_dropped_notice")
             )
@@ -386,15 +398,19 @@ fun ImeInputView(
         statusNotice?.let { status ->
             Text(
                 text = status,
-                color = palette.alphaLegend.copy(alpha = 0.55f),
+                color = onSurfaceVariant,
                 fontSize = 10.sp,
                 modifier = Modifier.testTag("ime_status_notice")
             )
         }
 
-        // The user's own key rows, configured in Behavior settings. These are the reason the staging
-        // field is kept small - most of what is here a phone IME either buries behind a symbol page
-        // or cannot produce at all.
+        // Pushes the key rows down against the soft keyboard. They belong to the keyboard, not to
+        // the text field, so they sit where a physical extension row would - under the thumbs,
+        // directly above the IME - rather than floating under the input box.
+        Spacer(modifier = Modifier.weight(1f))
+
+        // The user's own key rows, configured in Behavior settings. Most of what is here a phone IME
+        // either buries behind a symbol page or cannot produce at all.
         //
         // Everything is sent to the *host*: "Back" is the host's back navigation (Alt+Left in
         // browsers and file managers), not this phone's back gesture.
@@ -441,20 +457,21 @@ private fun ImeAuxKey(
     testTagSuffix: String? = null,
     onClick: () -> Unit
 ) {
+    // Styled like a key on the soft keyboard it sits above, in the app's own light/dark palette.
     Box(
         modifier = modifier
-            .height(38.dp)
+            .height(42.dp)
             .clip(RoundedCornerShape(6.dp))
-            .background(Color.White.copy(alpha = 0.12f))
-            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
             .clickable { onClick() }
             .testTag("ime_aux_${testTagSuffix ?: label}"),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = label,
-            color = Color.White.copy(alpha = 0.9f),
-            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1
         )

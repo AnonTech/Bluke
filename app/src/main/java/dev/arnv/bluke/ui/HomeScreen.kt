@@ -405,8 +405,6 @@ fun HomeScreen(
                     // Stays portrait and keeps the system bars: this mode needs the soft keyboard,
                     // which cannot share the screen with the immersive landscape plate.
                     ImeInputView(
-                        palette = Colorways.PALETTES[selectedLayoutType]
-                            ?: Colorways.PALETTES[KeyboardLayoutType.OBLIVION_75]!!,
                         isConnected = isConnected,
                         hostLayout = HostLayouts.byId(hostLayoutId),
                         unicodeMode = UnicodeEntry.UnicodeEntryMode.byId(unicodeEntryModeId),
@@ -497,7 +495,7 @@ fun HomeScreen(
                                         modifier = Modifier.size(11.dp)
                                     )
                                     Text(
-                                        text = "Keyboard Mode",
+                                        text = "${InputModes.displayName(InputModes.KEYBOARD)} Mode",
                                         color = Color.White,
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold
@@ -1344,7 +1342,9 @@ fun HomeScreen(
                                 val modeIcon = when (launchMode) {
                                     InputModes.TOUCHPAD -> Icons.Default.Mouse
                                     InputModes.GAMEPAD -> Icons.Default.SportsEsports
-                                    InputModes.SYSTEM_KEYBOARD -> Icons.Default.KeyboardAlt
+                                    // A phone, not a second keyboard glyph: KeyboardAlt is almost
+                                    // indistinguishable from Keyboard at this size.
+                                    InputModes.SYSTEM_KEYBOARD -> Icons.Default.PhoneAndroid
                                     else -> Icons.Default.Keyboard
                                 }
                                 Icon(

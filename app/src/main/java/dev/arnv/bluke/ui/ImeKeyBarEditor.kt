@@ -54,7 +54,7 @@ fun ImeKeyBarEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("System Keyboard Keys") },
+        title = { Text("Phone Keyboard Extra Keys") },
         text = {
             Column(
                 modifier = Modifier

@@ -30,7 +30,6 @@ import dev.arnv.bluke.ui.ImeKeyBar
 import dev.arnv.bluke.ui.ImeKeyBarEditorDialog
 import dev.arnv.bluke.ui.InputModes
 import dev.arnv.bluke.ui.UnicodeEntry
-import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.KeyboardAlt
 import androidx.compose.material.icons.filled.Language
@@ -181,7 +180,7 @@ class BehaviorActivity : ComponentActivity() {
                                     onClick = { showUnicodeDialog = true }
                                 ),
                                 SettingsItemData(
-                                    title = "System Keyboard Keys",
+                                    title = "Phone Keyboard Extra Keys",
                                     subtitle = imeKeyRows.let { rows ->
                                         val keyCount = rows.sumOf { it.size }
                                         "$keyCount ${if (keyCount == 1) "key" else "keys"} in " +
@@ -189,7 +188,7 @@ class BehaviorActivity : ComponentActivity() {
                                             "Pin the keys your keyboard hides - pipe, tilde, Home, " +
                                             "function keys, host shortcuts."
                                     },
-                                    icon = { Icon(Icons.Default.Dashboard, null, tint = MaterialTheme.colorScheme.primary) },
+                                    icon = { Icon(Icons.Default.PhoneAndroid, null, tint = MaterialTheme.colorScheme.primary) },
                                     onClick = { showKeyBarDialog = true }
                                 )
                             )

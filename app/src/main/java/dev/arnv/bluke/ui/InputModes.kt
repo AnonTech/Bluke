@@ -38,11 +38,18 @@ object InputModes {
         prefKey(SYSTEM_KEYBOARD)
     )
 
+    /**
+     * Names as shown on the launch button and mode picker.
+     *
+     * "Keycaps" and "Phone Keyboard" rather than "Keyboard" and "System Keyboard": the latter pair
+     * differ by one word and read as variants of the same thing, when in fact one draws a mechanical
+     * keyboard and the other hands over to the phone's own IME.
+     */
     fun displayName(mode: Int): String = when (mode) {
         TOUCHPAD -> "Touchpad"
         GAMEPAD -> "Gamepad"
-        SYSTEM_KEYBOARD -> "System Keyboard"
-        else -> "Keyboard"
+        SYSTEM_KEYBOARD -> "Phone Keyboard"
+        else -> "Keycaps"
     }
 
     /**
