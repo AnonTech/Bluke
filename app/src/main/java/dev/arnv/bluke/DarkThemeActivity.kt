@@ -1,6 +1,5 @@
 package dev.arnv.bluke
 
-import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -15,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
 import dev.arnv.bluke.ui.SettingsCardGroup
 import dev.arnv.bluke.ui.SettingsItemData
 import dev.arnv.bluke.ui.theme.MyApplicationTheme
@@ -24,11 +24,11 @@ class DarkThemeActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        val sharedPrefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        val sharedPrefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
         
         setContent {
             MyApplicationTheme {
-                var themeMode by remember { mutableStateOf(sharedPrefs.getInt("theme_mode", 0)) } // 0: System, 1: Off, 2: On
+                var themeMode by remember { mutableIntStateOf(sharedPrefs.getInt("theme_mode", 0)) } // 0: System, 1: Off, 2: On
                 var highContrastMode by remember { mutableStateOf(sharedPrefs.getBoolean("high_contrast_mode", false)) }
                 
                 val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
@@ -69,13 +69,13 @@ class DarkThemeActivity : ComponentActivity() {
                                             selected = themeMode == 0,
                                             onClick = {
                                                 themeMode = 0
-                                                sharedPrefs.edit().putInt("theme_mode", 0).apply()
+                                                sharedPrefs.edit { putInt("theme_mode", 0) }
                                             }
                                         )
                                     },
                                     onClick = {
                                         themeMode = 0
-                                        sharedPrefs.edit().putInt("theme_mode", 0).apply()
+                                        sharedPrefs.edit { putInt("theme_mode", 0) }
                                     }
                                 ),
                                 SettingsItemData(
@@ -85,13 +85,13 @@ class DarkThemeActivity : ComponentActivity() {
                                             selected = themeMode == 1,
                                             onClick = {
                                                 themeMode = 1
-                                                sharedPrefs.edit().putInt("theme_mode", 1).apply()
+                                                sharedPrefs.edit { putInt("theme_mode", 1) }
                                             }
                                         )
                                     },
                                     onClick = {
                                         themeMode = 1
-                                        sharedPrefs.edit().putInt("theme_mode", 1).apply()
+                                        sharedPrefs.edit { putInt("theme_mode", 1) }
                                     }
                                 ),
                                 SettingsItemData(
@@ -101,13 +101,13 @@ class DarkThemeActivity : ComponentActivity() {
                                             selected = themeMode == 2,
                                             onClick = {
                                                 themeMode = 2
-                                                sharedPrefs.edit().putInt("theme_mode", 2).apply()
+                                                sharedPrefs.edit { putInt("theme_mode", 2) }
                                             }
                                         )
                                     },
                                     onClick = {
                                         themeMode = 2
-                                        sharedPrefs.edit().putInt("theme_mode", 2).apply()
+                                        sharedPrefs.edit { putInt("theme_mode", 2) }
                                     }
                                 )
                             )
@@ -125,7 +125,7 @@ class DarkThemeActivity : ComponentActivity() {
                                             checked = highContrastMode,
                                             onCheckedChange = { 
                                                 highContrastMode = it
-                                                sharedPrefs.edit().putBoolean("high_contrast_mode", it).apply()
+                                                sharedPrefs.edit { putBoolean("high_contrast_mode", it) }
                                             }
                                         )
                                     }

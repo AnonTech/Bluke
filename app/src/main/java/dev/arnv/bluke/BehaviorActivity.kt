@@ -1,6 +1,5 @@
 package dev.arnv.bluke
 
-import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -13,6 +12,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -47,19 +47,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 
 
+import androidx.core.content.edit
+
 class BehaviorActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        val sharedPrefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        val sharedPrefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
         
         setContent {
             MyApplicationTheme {
                 var hideUnknownDevices by remember { mutableStateOf(sharedPrefs.getBoolean("hide_unknown", false)) }
                 var hideUnsupportedDevices by remember { mutableStateOf(sharedPrefs.getBoolean("hide_unsupported", true)) }
                 var showMacAddress by remember { mutableStateOf(sharedPrefs.getBoolean("show_mac", false)) }
-                var keySensitivity by remember { mutableStateOf(sharedPrefs.getFloat("key_sensitivity", 6f)) }
+                var autoConnectEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_connect", true)) }
+                var keySensitivity by remember { mutableFloatStateOf(sharedPrefs.getFloat("key_sensitivity", 6f)) }
                 var lockSyncMode by remember { mutableStateOf(sharedPrefs.getString("lock_sync_mode", "host") ?: "host") }
                 var useSystemIme by remember { mutableStateOf(sharedPrefs.getBoolean("use_system_ime", false)) }
                 var hostLayoutId by remember {
@@ -132,7 +135,7 @@ class BehaviorActivity : ComponentActivity() {
                                         value = keySensitivity,
                                         onValueChange = {
                                             keySensitivity = it
-                                            sharedPrefs.edit().putFloat("key_sensitivity", it).apply()
+                                            sharedPrefs.edit { putFloat("key_sensitivity", it) }
                                         },
                                         valueRange = 0f..10f,
                                         steps = 9,
@@ -336,7 +339,7 @@ class BehaviorActivity : ComponentActivity() {
                                             checked = hideUnknownDevices,
                                             onCheckedChange = { 
                                                 hideUnknownDevices = it
-                                                sharedPrefs.edit().putBoolean("hide_unknown", it).apply()
+                                                sharedPrefs.edit { putBoolean("hide_unknown", it) }
                                             }
                                         )
                                     }
@@ -350,7 +353,7 @@ class BehaviorActivity : ComponentActivity() {
                                             checked = hideUnsupportedDevices,
                                             onCheckedChange = { 
                                                 hideUnsupportedDevices = it
-                                                sharedPrefs.edit().putBoolean("hide_unsupported", it).apply()
+                                                sharedPrefs.edit { putBoolean("hide_unsupported", it) }
                                             }
                                         )
                                     }
@@ -364,7 +367,21 @@ class BehaviorActivity : ComponentActivity() {
                                             checked = showMacAddress,
                                             onCheckedChange = { 
                                                 showMacAddress = it
-                                                sharedPrefs.edit().putBoolean("show_mac", it).apply()
+                                                sharedPrefs.edit { putBoolean("show_mac", it) }
+                                            }
+                                        )
+                                    }
+                                ),
+                                SettingsItemData(
+                                    title = "Auto-Reconnect on Launch",
+                                    subtitle = "Automatically connect to the last paired device when Bluetooth is ready",
+                                    icon = { Icon(Icons.Default.BluetoothConnected, null, tint = MaterialTheme.colorScheme.primary) },
+                                    action = {
+                                        Switch(
+                                            checked = autoConnectEnabled,
+                                            onCheckedChange = { 
+                                                autoConnectEnabled = it
+                                                sharedPrefs.edit { putBoolean("auto_connect", it) }
                                             }
                                         )
                                     }
@@ -373,7 +390,7 @@ class BehaviorActivity : ComponentActivity() {
                         )
                         
                         // Quick Cycle Configurations
-                        val allLayoutTypes = KeyboardLayoutType.values()
+                        val allLayoutTypes = KeyboardLayoutType.entries
                         var activeLayoutsSet by remember {
                             mutableStateOf(sharedPrefs.getStringSet("cycle_keyboard_layouts", allLayoutTypes.map { it.name }.toSet()) ?: emptySet())
                         }
@@ -384,7 +401,7 @@ class BehaviorActivity : ComponentActivity() {
                                 .joinToString(", ") { it.displayName }
                         }
 
-                        val allSwitches = SwitchType.values()
+                        val allSwitches = SwitchType.entries
                         var activeSoundsSet by remember {
                             mutableStateOf(sharedPrefs.getStringSet("cycle_key_sounds", allSwitches.map { it.name }.toSet()) ?: emptySet())
                         }
@@ -408,11 +425,11 @@ class BehaviorActivity : ComponentActivity() {
                         } else {
                             listOf("keyboard", "touchpad", "gamepad")
                                 .filter { activeModesSet.contains(it) }
-                                .map { connectionModesDisplayMap[it] ?: it }
+                                .mapNotNull { connectionModesDisplayMap[it] }
                                 .joinToString(", ")
                         }
 
-                        val allCaseColors = CaseColor.values()
+                        val allCaseColors = CaseColor.entries
                         var activeColorsSet by remember {
                             mutableStateOf(sharedPrefs.getStringSet("cycle_case_colors", allCaseColors.map { it.name }.toSet()) ?: emptySet())
                         }
@@ -469,13 +486,13 @@ class BehaviorActivity : ComponentActivity() {
                                             selected = lockSyncMode == "host",
                                             onClick = {
                                                 lockSyncMode = "host"
-                                                sharedPrefs.edit().putString("lock_sync_mode", "host").apply()
+                                                sharedPrefs.edit { putString("lock_sync_mode", "host") }
                                             }
                                         )
                                     },
                                     onClick = {
                                         lockSyncMode = "host"
-                                        sharedPrefs.edit().putString("lock_sync_mode", "host").apply()
+                                        sharedPrefs.edit { putString("lock_sync_mode", "host") }
                                     }
                                 ),
                                 SettingsItemData(
@@ -486,13 +503,13 @@ class BehaviorActivity : ComponentActivity() {
                                             selected = lockSyncMode == "device",
                                             onClick = {
                                                 lockSyncMode = "device"
-                                                sharedPrefs.edit().putString("lock_sync_mode", "device").apply()
+                                                sharedPrefs.edit { putString("lock_sync_mode", "device") }
                                             }
                                         )
                                     },
                                     onClick = {
                                         lockSyncMode = "device"
-                                        sharedPrefs.edit().putString("lock_sync_mode", "device").apply()
+                                        sharedPrefs.edit { putString("lock_sync_mode", "device") }
                                     }
                                 )
                             )
@@ -631,7 +648,7 @@ class BehaviorActivity : ComponentActivity() {
                                 confirmButton = {
                                     TextButton(
                                         onClick = {
-                                            sharedPrefs.edit().putStringSet("cycle_keyboard_layouts", selectedLayouts.toSet()).apply()
+                                            sharedPrefs.edit { putStringSet("cycle_keyboard_layouts", selectedLayouts.toSet()) }
                                             activeLayoutsSet = selectedLayouts.toSet()
                                             showLayoutsDialog = false
                                         }
@@ -779,7 +796,7 @@ class BehaviorActivity : ComponentActivity() {
                                 confirmButton = {
                                     TextButton(
                                         onClick = {
-                                            sharedPrefs.edit().putStringSet("cycle_key_sounds", selectedSounds.toSet()).apply()
+                                            sharedPrefs.edit { putStringSet("cycle_key_sounds", selectedSounds.toSet()) }
                                             activeSoundsSet = selectedSounds.toSet()
                                             showSoundsDialog = false
                                         }
@@ -932,7 +949,7 @@ class BehaviorActivity : ComponentActivity() {
                                 confirmButton = {
                                     TextButton(
                                         onClick = {
-                                            sharedPrefs.edit().putStringSet("cycle_connection_modes", selectedModes.toSet()).apply()
+                                            sharedPrefs.edit { putStringSet("cycle_connection_modes", selectedModes.toSet()) }
                                             activeModesSet = selectedModes.toSet()
                                             showModesDialog = false
                                         }
@@ -954,9 +971,9 @@ class BehaviorActivity : ComponentActivity() {
                                     addAll(activeColorsSet)
                                 }
                             }
-                            var customR by remember { mutableStateOf(sharedPrefs.getInt("custom_case_color_r", 63)) }
-                            var customG by remember { mutableStateOf(sharedPrefs.getInt("custom_case_color_g", 81)) }
-                            var customB by remember { mutableStateOf(sharedPrefs.getInt("custom_case_color_b", 181)) }
+                            var customR by remember { mutableIntStateOf(sharedPrefs.getInt("custom_case_color_r", 63)) }
+                            var customG by remember { mutableIntStateOf(sharedPrefs.getInt("custom_case_color_g", 81)) }
+                            var customB by remember { mutableIntStateOf(sharedPrefs.getInt("custom_case_color_b", 181)) }
                             var customMetallic by remember { mutableStateOf(sharedPrefs.getBoolean("custom_case_color_metallic", false)) }
 
                             AlertDialog(
@@ -1164,13 +1181,13 @@ class BehaviorActivity : ComponentActivity() {
                                 confirmButton = {
                                     TextButton(
                                         onClick = {
-                                            sharedPrefs.edit()
-                                                .putStringSet("cycle_case_colors", selectedColors.toSet())
-                                                .putInt("custom_case_color_r", customR)
-                                                .putInt("custom_case_color_g", customG)
-                                                .putInt("custom_case_color_b", customB)
-                                                .putBoolean("custom_case_color_metallic", customMetallic)
-                                                .apply()
+                                            sharedPrefs.edit {
+                                                putStringSet("cycle_case_colors", selectedColors.toSet())
+                                                putInt("custom_case_color_r", customR)
+                                                putInt("custom_case_color_g", customG)
+                                                putInt("custom_case_color_b", customB)
+                                                putBoolean("custom_case_color_metallic", customMetallic)
+                                            }
                                             activeColorsSet = selectedColors.toSet()
                                             showColorsDialog = false
                                         }

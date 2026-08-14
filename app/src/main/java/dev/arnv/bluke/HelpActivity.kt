@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.arnv.bluke.ui.theme.MyApplicationTheme
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import kotlin.time.Duration.Companion.milliseconds
 
 class HelpActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
@@ -36,11 +37,11 @@ class HelpActivity : ComponentActivity() {
         val isFirstRun = intent.getBooleanExtra("first_run", false)
         
         setContent {
-            MyApplicationTheme() {
-                var timer by remember { mutableStateOf(if (isFirstRun) 5 else 0) }
+            MyApplicationTheme {
+                var timer by remember { mutableIntStateOf(if (isFirstRun) 5 else 0) }
                 LaunchedEffect(timer) {
                     if (timer > 0) {
-                        delay(1000)
+                        delay(1000L.milliseconds)
                         timer -= 1
                     }
                 }

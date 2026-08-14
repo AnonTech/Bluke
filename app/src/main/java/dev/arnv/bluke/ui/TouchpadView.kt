@@ -3,7 +3,6 @@ package dev.arnv.bluke.ui
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
-import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.compose.animation.*
@@ -15,7 +14,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,17 +36,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.arnv.bluke.bluetooth.BluetoothKeyboardManager
-import dev.arnv.bluke.bluetooth.BluetoothState
 import androidx.compose.ui.res.painterResource
+import androidx.core.content.edit
 import dev.arnv.bluke.R
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import kotlin.math.roundToInt
+import kotlin.time.Duration.Companion.milliseconds
 
 enum class TrackpadButtonMode(val displayName: String) {
     CLICKPAD("Clickpad"),
@@ -56,6 +55,7 @@ enum class TrackpadButtonMode(val displayName: String) {
     THREE_BUTTONS("3-Button L/M/R")
 }
 
+@SuppressLint("MissingPermission")
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun TouchpadView(
@@ -78,23 +78,20 @@ fun TouchpadView(
         mutableStateOf(sharedPrefs.getBoolean("touchpad_vibration_enabled", true))
     }
     var sensitivity by remember {
-        mutableStateOf(sharedPrefs.getFloat("touchpad_sensitivity", 1.5f))
+        mutableFloatStateOf(sharedPrefs.getFloat("touchpad_sensitivity", 1.5f))
+    }
+    var scrollSensitivity by remember {
+        mutableFloatStateOf(sharedPrefs.getFloat("touchpad_scroll_sensitivity", 1.0f))
     }
 
     // Haptic buzz function using Android's Vibrator
+    @Suppress("DEPRECATION")
     val triggerVibration = { milliseconds: Long ->
         if (isVibrationEnabled) {
             try {
                 val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-                vibrator?.let {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        it.vibrate(VibrationEffect.createOneShot(milliseconds, VibrationEffect.DEFAULT_AMPLITUDE))
-                    } else {
-                        @Suppress("DEPRECATION")
-                        it.vibrate(milliseconds)
-                    }
-                }
-            } catch (e: Exception) {
+                vibrator?.vibrate(VibrationEffect.createOneShot(milliseconds, VibrationEffect.DEFAULT_AMPLITUDE))
+            } catch (_: Exception) {
                 // Fail-safe catch for security/hardware vibration errors
             }
         }
@@ -284,7 +281,7 @@ fun TouchpadView(
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color.White.copy(alpha = 0.15f))
                             .clickable {
-                                val values = TrackpadButtonMode.values()
+                                val values = TrackpadButtonMode.entries
                                 val nextMode = values[(buttonMode.ordinal + 1) % values.size]
                                 buttonMode = nextMode
                                 triggerVibration(15)
@@ -307,7 +304,7 @@ fun TouchpadView(
                         )
                     }
 
-                    // Sensitivity pill rotation (1.0x, 1.5x, 2.0x, 2.5x)
+                    // Mouse Sensitivity pill rotation (1.0x, 1.5x, 2.0x, 2.5x)
                     Row(
                         modifier = Modifier
                             .height(28.dp)
@@ -322,7 +319,7 @@ fun TouchpadView(
                                     else -> 1.0f
                                 }
                                 sensitivity = currentSens
-                                sharedPrefs.edit().putFloat("touchpad_sensitivity", currentSens).apply()
+                                sharedPrefs.edit { putFloat("touchpad_sensitivity", currentSens) }
                                 triggerVibration(15)
                             }
                             .padding(horizontal = 8.dp),
@@ -343,6 +340,42 @@ fun TouchpadView(
                         )
                     }
 
+                    // Scroll Speed pill rotation (1.0x, 1.5x, 2.0x, 2.5x)
+                    Row(
+                        modifier = Modifier
+                            .height(28.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color.White.copy(alpha = 0.15f))
+                            .clickable {
+                                var currentScroll = scrollSensitivity
+                                currentScroll = when {
+                                    currentScroll <= 1.0f -> 1.5f
+                                    currentScroll <= 1.5f -> 2.0f
+                                    currentScroll <= 2.0f -> 2.5f
+                                    else -> 1.0f
+                                }
+                                scrollSensitivity = currentScroll
+                                sharedPrefs.edit { putFloat("touchpad_scroll_sensitivity", currentScroll) }
+                                triggerVibration(15)
+                            }
+                            .padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardDoubleArrowUp,
+                            contentDescription = "Scroll Speed",
+                            tint = Color.White,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = "${scrollSensitivity}x",
+                            color = Color.White,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
                     // Case Color Selector Pill
                     Row(
                         modifier = Modifier
@@ -350,8 +383,8 @@ fun TouchpadView(
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color.White.copy(alpha = 0.15f))
                             .clickable {
-                                val enabledColors = CaseColor.values().filter { color ->
-                                    sharedPrefs.getStringSet("cycle_case_colors", CaseColor.values().map { it.name }.toSet())?.contains(color.name) == true
+                                val enabledColors = CaseColor.entries.filter { color ->
+                                    sharedPrefs.getStringSet("cycle_case_colors", CaseColor.entries.map { it.name }.toSet())?.contains(color.name) == true
                                 }.ifEmpty { listOf(selectedCaseColor) }
                                 val currentIndexInEnabled = enabledColors.indexOf(selectedCaseColor)
                                 val nextIndex = (currentIndexInEnabled + 1) % enabledColors.size
@@ -385,7 +418,7 @@ fun TouchpadView(
                             .clickable {
                                 val active = !isVibrationEnabled
                                 isVibrationEnabled = active
-                                sharedPrefs.edit().putBoolean("touchpad_vibration_enabled", active).apply()
+                                sharedPrefs.edit { putBoolean("touchpad_vibration_enabled", active) }
                                 if (active) {
                                     triggerVibration(50)
                                 }
@@ -439,6 +472,7 @@ fun TouchpadView(
                     TouchGestureLayer(
                         btManager = btManager,
                         sensitivity = sensitivity,
+                        scrollSensitivity = scrollSensitivity,
                         buttonMode = buttonMode,
                         triggerVibration = triggerVibration,
                         showNumpadLed = showNumpadLed
@@ -626,34 +660,41 @@ fun NumpadLedGrid(onKeyPress: (Int, Boolean) -> Unit) {
 fun TouchGestureLayer(
     btManager: BluetoothKeyboardManager,
     sensitivity: Float,
+    scrollSensitivity: Float,
     buttonMode: TrackpadButtonMode,
     triggerVibration: (Long) -> Unit,
     showNumpadLed: Boolean
 ) {
     // Tracking points and states for reliable swipe gesture translation
     var lastActivePointerId by remember { mutableStateOf<PointerId?>(null) }
-    var accumulatedX by remember { mutableStateOf(0f) }
-    var accumulatedY by remember { mutableStateOf(0f) }
-    var lastPointX by remember { mutableStateOf(0f) }
-    var lastPointY by remember { mutableStateOf(0f) }
+    var accumulatedX by remember { mutableFloatStateOf(0f) }
+    var accumulatedY by remember { mutableFloatStateOf(0f) }
+    var lastPointX by remember { mutableFloatStateOf(0f) }
+    var lastPointY by remember { mutableFloatStateOf(0f) }
 
     // Multi-touch tracking
     var isTwoFingerActive by remember { mutableStateOf(false) }
-    var lastTwoFingerY by remember { mutableStateOf(0f) }
-    var accumulatedScrollY by remember { mutableStateOf(0f) }
+    var lastTwoFingerY by remember { mutableFloatStateOf(0f) }
+    var accumulatedScrollY by remember { mutableFloatStateOf(0f) }
 
     // Tap tracking
     val pointerDownInfo = remember { mutableMapOf<PointerId, Pair<Long, Offset>>() }
     var maxPointersInTap by remember { mutableIntStateOf(0) }
+    var lastTapReleaseTime by remember { mutableLongStateOf(0L) }
+    var lastTapReleasePosition by remember { mutableStateOf<Offset?>(null) }
+    var isDoubleTapDragging by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    var pendingTapJob by remember { mutableStateOf<Job?>(null) }
+    var hasMovedDuringDrag by remember { mutableStateOf(false) }
 
     // Rate limiting to prevent Bluetooth L2CAP packet flooding
-    var lastReportTime by remember { mutableStateOf(0L) }
+    var lastReportTime by remember { mutableLongStateOf(0L) }
 
     // Visual pointer (touchpad thumb) tracking states
     var isTouchActive by remember { mutableStateOf(false) }
-    var touchX by remember { mutableStateOf(0f) }
-    var touchY by remember { mutableStateOf(0f) }
-    var touchCount by remember { mutableStateOf(0) }
+    var activeTouchPoints by remember { mutableStateOf<List<Offset>>(emptyList()) }
+    var touchCount by remember { mutableIntStateOf(0) }
+    var activeMouseButton by remember { mutableStateOf<Byte>(0) }
 
     val density = androidx.compose.ui.platform.LocalDensity.current
     val thumbActiveAlpha by animateFloatAsState(
@@ -670,7 +711,7 @@ fun TouchGestureLayer(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(sensitivity, buttonMode, showNumpadLed) {
+            .pointerInput(sensitivity, scrollSensitivity, buttonMode, showNumpadLed) {
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
@@ -683,14 +724,11 @@ fun TouchGestureLayer(
                         }
 
                         // Determine active pointers
-                        val downCount = changes.count { it.pressed }
+                        val pressedChanges = changes.filter { it.pressed }
+                        val downCount = pressedChanges.size
                         touchCount = downCount
                         isTouchActive = downCount > 0
-                        if (downCount > 0) {
-                            val firstPressed = changes.first { it.pressed }
-                            touchX = firstPressed.position.x
-                            touchY = firstPressed.position.y
-                        }
+                        activeTouchPoints = pressedChanges.map { it.position }
 
                         if (downCount > maxPointersInTap) {
                             maxPointersInTap = downCount
@@ -700,6 +738,25 @@ fun TouchGestureLayer(
                         changes.forEach { change ->
                             if (change.pressed && !change.previousPressed) {
                                 pointerDownInfo[change.id] = change.uptimeMillis to change.position
+                                
+                                // Cancel any pending single-finger click since a new touch down occurred
+                                pendingTapJob?.cancel()
+                                pendingTapJob = null
+                                
+                                // Check for double tap drag gesture start
+                                val nowUptime = change.uptimeMillis
+                                val lastRelease = lastTapReleaseTime
+                                val lastPos = lastTapReleasePosition
+                                if (nowUptime - lastRelease < 300L && lastPos != null) {
+                                    val dx = change.position.x - lastPos.x
+                                    val dy = change.position.y - lastPos.y
+                                    val distSq = dx * dx + dy * dy
+                                    if (distSq < 10000f) { // ~100px radius tolerance
+                                        isDoubleTapDragging = true
+                                        hasMovedDuringDrag = false
+                                        triggerVibration(15)
+                                    }
+                                }
                             }
                         }
 
@@ -724,7 +781,16 @@ fun TouchGestureLayer(
                                     val sendY = accumulatedY.roundToInt().coerceIn(-127, 127)
 
                                     if (sendX != 0 || sendY != 0) {
-                                        btManager.sendMouseReport(0, sendX.toByte(), sendY.toByte(), 0)
+                                        if (isDoubleTapDragging) {
+                                            if (!hasMovedDuringDrag) {
+                                                // Drag gesture officially started! Send left button down
+                                                btManager.sendMouseReport(1, 0, 0, 0)
+                                                hasMovedDuringDrag = true
+                                            }
+                                            btManager.sendMouseReport(1, sendX.toByte(), sendY.toByte(), 0)
+                                        } else {
+                                            btManager.sendMouseReport(activeMouseButton, sendX.toByte(), sendY.toByte(), 0)
+                                        }
                                         accumulatedX -= sendX
                                         accumulatedY -= sendY
                                         lastReportTime = now
@@ -743,27 +809,21 @@ fun TouchGestureLayer(
 
                                 if (touchYVal > height * 0.82f) {
                                     triggerVibration(25)
-                                    when (buttonMode) {
+                                    val btnMask = when (buttonMode) {
                                         TrackpadButtonMode.TWO_BUTTONS -> {
-                                            if (touchXVal < width / 2f) {
-                                                btManager.sendMouseReport(1, 0, 0, 0)
-                                            } else {
-                                                btManager.sendMouseReport(2, 0, 0, 0)
-                                            }
+                                            if (touchXVal < width / 2f) 1 else 2
                                         }
                                         TrackpadButtonMode.THREE_BUTTONS -> {
                                             when {
-                                                touchXVal < width * 0.35f -> btManager.sendMouseReport(1, 0, 0, 0)
-                                                touchXVal < width * 0.65f -> btManager.sendMouseReport(4, 0, 0, 0)
-                                                else -> btManager.sendMouseReport(2, 0, 0, 0)
+                                                touchXVal < width * 0.35f -> 1
+                                                touchXVal < width * 0.65f -> 4
+                                                else -> 2
                                             }
                                         }
-                                        TrackpadButtonMode.CLICKPAD -> {
-                                            btManager.sendMouseReport(1, 0, 0, 0)
-                                        }
+                                        TrackpadButtonMode.CLICKPAD -> 1
                                     }
-                                    btManager.sendMouseReport(0, 0, 0, 0)
-                                    pointerDownInfo.remove(pointer.id)
+                                    activeMouseButton = btnMask.toByte()
+                                    btManager.sendMouseReport(btnMask.toByte(), 0, 0, 0)
                                 }
                             }
 
@@ -776,7 +836,7 @@ fun TouchGestureLayer(
                                     accumulatedScrollY = 0f
                                     lastTwoFingerY = currentYAverage
                                 } else {
-                                    accumulatedScrollY += (currentYAverage - lastTwoFingerY) * 0.25f
+                                    accumulatedScrollY += (currentYAverage - lastTwoFingerY) * 0.06f * scrollSensitivity
                                     val now = System.currentTimeMillis()
                                     if (now - lastReportTime >= 10L) {
                                         val sendScroll = accumulatedScrollY.roundToInt().coerceIn(-127, 127)
@@ -796,7 +856,15 @@ fun TouchGestureLayer(
                             val sendX = accumulatedX.roundToInt().coerceIn(-127, 127)
                             val sendY = accumulatedY.roundToInt().coerceIn(-127, 127)
                             if (sendX != 0 || sendY != 0) {
-                                btManager.sendMouseReport(0, sendX.toByte(), sendY.toByte(), 0)
+                                if (isDoubleTapDragging) {
+                                    if (!hasMovedDuringDrag) {
+                                        btManager.sendMouseReport(1, 0, 0, 0)
+                                        hasMovedDuringDrag = true
+                                    }
+                                    btManager.sendMouseReport(1, sendX.toByte(), sendY.toByte(), 0)
+                                } else {
+                                    btManager.sendMouseReport(activeMouseButton, sendX.toByte(), sendY.toByte(), 0)
+                                }
                             }
                             val sendScroll = accumulatedScrollY.roundToInt().coerceIn(-127, 127)
                             if (sendScroll != 0) {
@@ -811,24 +879,63 @@ fun TouchGestureLayer(
                         changes.forEach { change ->
                             if (change.changedToUp()) {
                                 val downInfo = pointerDownInfo.remove(change.id)
-                                if (downInfo != null) {
-                                    val duration = change.uptimeMillis - downInfo.first
-                                    val dx = change.position.x - downInfo.second.x
-                                    val dy = change.position.y - downInfo.second.y
-                                    val distanceSq = dx * dx + dy * dy
-                                    
-                                    if (duration < 250L && distanceSq < 40f) {
-                                        if (downCount == 0) {
-                                            triggerVibration(20)
-                                            if (maxPointersInTap >= 3) {
-                                                btManager.sendMouseReport(4, 0, 0, 0)
-                                                btManager.sendMouseReport(0, 0, 0, 0)
-                                            } else if (maxPointersInTap == 2) {
-                                                btManager.sendMouseReport(2, 0, 0, 0)
-                                                btManager.sendMouseReport(0, 0, 0, 0)
-                                            } else {
-                                                btManager.sendMouseReport(1, 0, 0, 0)
-                                                btManager.sendMouseReport(0, 0, 0, 0)
+                                if (isDoubleTapDragging) {
+                                    isDoubleTapDragging = false
+                                    if (hasMovedDuringDrag) {
+                                        // End of drag gesture: release left mouse button
+                                        activeMouseButton = 0
+                                        btManager.sendMouseReport(0, 0, 0, 0)
+                                        triggerVibration(15)
+                                    } else {
+                                        // No movement occurred: this is a double click!
+                                        // Click 1
+                                        btManager.sendMouseReport(1, 0, 0, 0)
+                                        btManager.sendMouseReport(0, 0, 0, 0)
+                                        // Click 2
+                                        btManager.sendMouseReport(1, 0, 0, 0)
+                                        btManager.sendMouseReport(0, 0, 0, 0)
+                                        triggerVibration(20)
+                                    }
+                                    hasMovedDuringDrag = false
+                                    lastTapReleaseTime = 0L
+                                    lastTapReleasePosition = null
+                                } else if (downInfo != null) {
+                                    val height = size.height
+                                    val touchYStart = downInfo.second.y
+                                    if (touchYStart > height * 0.82f) {
+                                        // Started in button partition, release button
+                                        activeMouseButton = 0
+                                        btManager.sendMouseReport(0, 0, 0, 0)
+                                        triggerVibration(15)
+                                    } else {
+                                        val duration = change.uptimeMillis - downInfo.first
+                                        val dx = change.position.x - downInfo.second.x
+                                        val dy = change.position.y - downInfo.second.y
+                                        val distanceSq = dx * dx + dy * dy
+                                        
+                                        if (duration < 250L && distanceSq < 40f) {
+                                            if (downCount == 0) {
+                                                triggerVibration(20)
+                                                
+                                                val clickButton = if (maxPointersInTap >= 3) 4 else if (maxPointersInTap == 2) 2 else 1
+                                                
+                                                if (clickButton == 1) {
+                                                    // Single-finger click: delay to check for double tap
+                                                    lastTapReleaseTime = change.uptimeMillis
+                                                    lastTapReleasePosition = change.position
+                                                    pendingTapJob = scope.launch {
+                                                        delay(180L.milliseconds)
+                                                        btManager.sendMouseReport(1, 0, 0, 0)
+                                                        btManager.sendMouseReport(0, 0, 0, 0)
+                                                        pendingTapJob = null
+                                                        lastTapReleaseTime = 0L
+                                                        lastTapReleasePosition = null
+                                                    }
+                                                } else {
+                                                    // Multi-finger click (Right/Middle click): send immediately
+                                                    btManager.sendMouseReport(clickButton.toByte(), 0, 0, 0)
+                                                    btManager.sendMouseReport(0, 0, 0, 0)
+                                                }
                                             }
                                         }
                                     }
@@ -917,46 +1024,48 @@ fun TouchGestureLayer(
             }
         }
 
-        // Draw touchpad thumb at touch coordinate (Themed slate/gradient style)
+        // Draw touchpad thumbs for all active finger coordinates (Themed slate/gradient style)
         val thumbSize = 28.dp
-        if (thumbActiveAlpha > 0.01f) {
-            Box(
-                modifier = Modifier
-                    .offset {
-                        IntOffset(
-                            x = (touchX - with(density) { (thumbSize / 2).toPx() }).roundToInt(),
-                            y = (touchY - with(density) { (thumbSize / 2).toPx() }).roundToInt()
-                        )
-                    }
-                    .size(thumbSize)
-                    .graphicsLayer {
-                        scaleX = thumbScale
-                        scaleY = thumbScale
-                        alpha = thumbActiveAlpha
-                    }
-                    .shadow(
-                        elevation = 4.dp,
-                        shape = CircleShape,
-                        clip = false,
-                        ambientColor = Color.Black,
-                        spotColor = Color.Black.copy(alpha = 0.5f)
-                    )
-                    .background(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(Color(0xFF38383B), Color(0xFF232325))
-                        ),
-                        shape = CircleShape
-                    )
-                    .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                // Subtle inner core
+        if (thumbActiveAlpha > 0.01f && !showNumpadLed) {
+            activeTouchPoints.forEach { point ->
                 Box(
                     modifier = Modifier
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.25f))
-                )
+                        .offset {
+                            IntOffset(
+                                x = (point.x - with(density) { (thumbSize / 2).toPx() }).roundToInt(),
+                                y = (point.y - with(density) { (thumbSize / 2).toPx() }).roundToInt()
+                            )
+                        }
+                        .size(thumbSize)
+                        .graphicsLayer {
+                            scaleX = thumbScale
+                            scaleY = thumbScale
+                            alpha = thumbActiveAlpha
+                        }
+                        .shadow(
+                            elevation = 4.dp,
+                            shape = CircleShape,
+                            clip = false,
+                            ambientColor = Color.Black,
+                            spotColor = Color.Black.copy(alpha = 0.5f)
+                        )
+                        .background(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(Color(0xFF38383B), Color(0xFF232325))
+                            ),
+                            shape = CircleShape
+                        )
+                        .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Subtle inner core
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.25f))
+                    )
+                }
             }
         }
     }

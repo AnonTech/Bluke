@@ -1,4 +1,5 @@
 package dev.arnv.bluke.ui
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.util.Log
 import android.bluetooth.BluetoothDevice
@@ -9,9 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import android.content.pm.ActivityInfo
 import android.os.Build
 import android.view.View
-import dev.arnv.bluke.ui.theme.*
 import androidx.compose.animation.*
-import androidx.compose.animation.core.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -28,7 +27,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,27 +39,19 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import android.net.Uri
 import android.content.Context
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import dev.arnv.bluke.R
 import androidx.compose.ui.unit.sp
+import androidx.core.content.edit
+import androidx.core.net.toUri
 import dev.arnv.bluke.bluetooth.BluetoothKeyboardManager
 import dev.arnv.bluke.bluetooth.BluetoothState
 import dev.arnv.bluke.sound.KeyboardSoundSynthesizer
 import dev.arnv.bluke.sound.SwitchType
 
-
-
-enum class RgbMode(val displayName: String) {
-    WAVE("RGB Wave"),
-    REACTIVE("Reactive Spark"),
-    STATIC("Ice Blue Glow"),
-    BREATHING("Warm Ember"),
-    OFF("Lights Off")
-}
-
+@SuppressLint("MissingPermission")
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -74,30 +64,31 @@ fun HomeScreen(
     // UI state
     var selectedLayoutType by rememberSaveable { mutableStateOf(KeyboardLayoutType.OBLIVION_75) }
     var selectedCaseColor by rememberSaveable { mutableStateOf(CaseColor.BLACK) }
-    var selectedRgbMode by rememberSaveable { mutableStateOf(RgbMode.OFF) }
     var isKeyboardActive by rememberSaveable { mutableStateOf(false) }
     val sharedPrefs = remember { context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE) }
     var hideUnknownDevices by remember { mutableStateOf(sharedPrefs.getBoolean("hide_unknown", false)) }
     var hideUnsupportedDevices by remember { mutableStateOf(sharedPrefs.getBoolean("hide_unsupported", true)) }
     var showMacAddress by remember { mutableStateOf(sharedPrefs.getBoolean("show_mac", false)) }
-    var showAboutDialog by rememberSaveable { mutableStateOf(false) }
-    var showSettingsDialog by rememberSaveable { mutableStateOf(false) }
-    var activeTab by rememberSaveable { mutableStateOf(0) }
-    var easterEggClicks by remember { mutableStateOf(0) }
+    var easterEggClicks by remember { mutableIntStateOf(0) }
     
     val view = LocalView.current
     var isHapticsEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("haptics_enabled", true)) }
-    var keySensitivity by remember { mutableStateOf(sharedPrefs.getFloat("key_sensitivity", 6f)) }
+    var keySensitivity by remember { mutableFloatStateOf(sharedPrefs.getFloat("key_sensitivity", 6f)) }
     var lockSyncMode by remember { mutableStateOf(sharedPrefs.getString("lock_sync_mode", "host") ?: "host") }
-    var launchMode by rememberSaveable { mutableStateOf(sharedPrefs.getInt("launch_mode", 0)) }
+    var launchMode by rememberSaveable { mutableIntStateOf(sharedPrefs.getInt("launch_mode", 0)) }
     // Hands typing over to the user's own IME (Gboard, Samsung Keyboard, ...) instead of Bluke's keycaps.
     var useSystemIme by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("use_system_ime", false)) }
     // The keyboard layout configured on the *host*, which decides how our scancodes are decoded.
     var hostLayoutId by remember { mutableStateOf(sharedPrefs.getString("host_layout", HostLayouts.DEFAULT.id)) }
     var unicodeEntryModeId by remember { mutableStateOf(sharedPrefs.getString("unicode_entry_mode", "off")) }
 
+    // Sound synth switch state
+    var currentSwitch by remember { mutableStateOf(soundSynth.getCurrentSwitch()) }
+
     // Mute state
     var isMuted by rememberSaveable { mutableStateOf(!sharedPrefs.getBoolean("key_sound_enabled", true)) }
+
+    var devModeRefreshTrigger by remember { mutableIntStateOf(0) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -109,6 +100,7 @@ fun HomeScreen(
                 val soundEnabled = sharedPrefs.getBoolean("key_sound_enabled", true)
                 isMuted = !soundEnabled
                 soundSynth.setMute(!soundEnabled)
+                currentSwitch = soundSynth.getCurrentSwitch()
                 isHapticsEnabled = sharedPrefs.getBoolean("haptics_enabled", true)
                 keySensitivity = sharedPrefs.getFloat("key_sensitivity", 6f)
                 lockSyncMode = sharedPrefs.getString("lock_sync_mode", "host") ?: "host"
@@ -126,6 +118,7 @@ fun HomeScreen(
                 }.ifEmpty { listOf(0) }
                 val savedLaunchMode = sharedPrefs.getInt("launch_mode", 0)
                 launchMode = if (enabledModes.contains(savedLaunchMode)) savedLaunchMode else enabledModes.first()
+                devModeRefreshTrigger++
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -136,7 +129,16 @@ fun HomeScreen(
 
     
     // Bluetooth status flows
-    val btState by btManager.serviceState.collectAsState()
+    val realBtState by btManager.serviceState.collectAsState()
+    
+    val btState = remember(realBtState, devModeRefreshTrigger) {
+        if (sharedPrefs.getBoolean("is_developer_mode", false)) {
+            if (sharedPrefs.getBoolean("mock_bt_disabled", false)) return@remember dev.arnv.bluke.bluetooth.BluetoothState.BluetoothOff
+            if (sharedPrefs.getBoolean("mock_device_unsupported", false)) return@remember dev.arnv.bluke.bluetooth.BluetoothState.Unsupported
+            if (sharedPrefs.getBoolean("mock_hid_unsupported", false)) return@remember dev.arnv.bluke.bluetooth.BluetoothState.ProfileNotSupported
+        }
+        realBtState
+    }
     val btMessage by btManager.statusMessage.collectAsState()
     
 
@@ -147,6 +149,56 @@ fun HomeScreen(
     
     // Active pressed keys set for visually pressing keycaps
     val activePressedKeys = remember { mutableStateListOf<Int>() }
+
+    var showUpdateDialog by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        val currentVersionCode = dev.arnv.bluke.BuildConfig.VERSION_CODE
+        val savedVersionCode = sharedPrefs.getInt("last_run_version_code", 0)
+        
+        // If they have seen onboarding, they are an existing user.
+        // If savedVersionCode < currentVersionCode, it's an update.
+        if ((savedVersionCode > 0 && savedVersionCode < currentVersionCode) || 
+            (savedVersionCode == 0 && sharedPrefs.getBoolean("has_seen_onboarding", false))) {
+            showUpdateDialog = true
+        }
+        
+        if (savedVersionCode != currentVersionCode) {
+            sharedPrefs.edit { putInt("last_run_version_code", currentVersionCode) }
+        }
+    }
+    
+    if (sharedPrefs.getBoolean("is_developer_mode", false) && sharedPrefs.getBoolean("mock_update_popup", false)) {
+        showUpdateDialog = true
+    }
+
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    if (showUpdateDialog) {
+        val versionName = dev.arnv.bluke.BuildConfig.VERSION_NAME
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { 
+                showUpdateDialog = false
+                sharedPrefs.edit { putBoolean("mock_update_popup", false) }
+            },
+            title = { Text("Updated to v$versionName") },
+            text = { Text("We've added new features and made significant underlying changes to the controller!\nFor detailed information, see the changelog.\n\n⚠️ IMPORTANT: Because the Bluetooth profiles have updated, you MUST completely unpair and remove Bluke and re-pair it on the phone and the target device. If you don't do this, the controller may not function properly and you will experience bugs.") },
+            confirmButton = {
+                Button(onClick = { 
+                    showUpdateDialog = false 
+                    sharedPrefs.edit { putBoolean("mock_update_popup", false) }
+                }) {
+                    Text("Got it")
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { 
+                    uriHandler.openUri("https://github.com/arnav-kr/Bluke/releases")
+                }) {
+                    Text("Changelog")
+                }
+            }
+        )
+    }
 
     // Connection helper declared at outer scope
     val isConnected = btState is BluetoothState.Connected
@@ -183,6 +235,19 @@ fun HomeScreen(
     // immersive keyboard plate - so it is treated like being back on the config screen here.
     val immersiveKeyboard = isKeyboardActive && !(launchMode == 0 && useSystemIme)
 
+    // Show Toast for connection errors, timeouts, rejections, or pairing failures
+    LaunchedEffect(btMessage) {
+        val lowerMessage = btMessage.lowercase()
+        if (lowerMessage.contains("timed out") ||
+            lowerMessage.contains("rejected") ||
+            lowerMessage.contains("failed") ||
+            lowerMessage.contains("refused") ||
+            lowerMessage.contains("error")
+        ) {
+            android.widget.Toast.makeText(context, btMessage, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // Toggle orientation and full-screen layout helper automatically
     LaunchedEffect(immersiveKeyboard) {
         val activity = context as? Activity ?: return@LaunchedEffect
@@ -214,6 +279,7 @@ fun HomeScreen(
             }
         } else {
             try {
+                @Suppress("SourceLockedOrientationActivity")
                 activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             } catch (e: Exception) {
                 Log.e("HomeScreen", "Error setting orientation to portrait: ${e.message}")
@@ -250,8 +316,8 @@ fun HomeScreen(
                 if (!isConnected || lockSyncMode == "device") {
                     when (keyCode) {
                         0x39 -> isCapsLockActive = !isCapsLockActive // KEY_CAPSLOCK
-                        0x47 -> isScrollLockActive = !isScrollLockActive // KEY_SCROLLLOCK
-                        0x53 -> isNumLockActive = !isNumLockActive // KEY_NUMLOCK
+                        0x47 -> isScrollLockActive = !isScrollLockActive // KEY_SCROLL_LOCK
+                        0x53 -> isNumLockActive = !isNumLockActive // KEY_NUM_LOCK
                     }
                 }
             }
@@ -262,18 +328,7 @@ fun HomeScreen(
         }
     }
 
-    // Hoisted outside AnimatedContent so the infinite animation doesn't restart
-    // when the user navigates away (e.g. Licenses) and returns to the keyboard screen.
-    val infiniteTransition = rememberInfiniteTransition(label = "rgb_wave_anim")
-    val rgbTimeProgress by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(4000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "progress"
-    )
+
 
     AnimatedContent(
         targetState = isKeyboardActive,
@@ -309,7 +364,7 @@ fun HomeScreen(
 
             when (launchMode) {
                 1, 2 -> {
-                    val darkScheme = androidx.compose.material3.darkColorScheme(
+                    val darkScheme = darkColorScheme(
                         primary = MaterialTheme.colorScheme.primary,
                         background = Color(0xFF141218),
                         surface = Color(0xFF141218),
@@ -327,7 +382,7 @@ fun HomeScreen(
                                     launchMode = launchMode,
                                     onModeChange = { newMode -> 
                                         launchMode = newMode
-                                        sharedPrefs.edit().putInt("launch_mode", newMode).apply()
+                                        sharedPrefs.edit { putInt("launch_mode", newMode) }
                                     },
                                     sharedPrefs = sharedPrefs,
                                     caseBrush = caseBrush,
@@ -345,7 +400,7 @@ fun HomeScreen(
                                     launchMode = launchMode,
                                     onModeChange = { newMode -> 
                                         launchMode = newMode
-                                        sharedPrefs.edit().putInt("launch_mode", newMode).apply()
+                                        sharedPrefs.edit { putInt("launch_mode", newMode) }
                                     },
                                     sharedPrefs = sharedPrefs,
                                     caseBrush = caseBrush
@@ -425,7 +480,7 @@ fun HomeScreen(
                                             val nextIndex = (currentIndexInEnabled + 1) % enabledModes.size
                                             val nextMode = enabledModes[nextIndex]
                                             launchMode = nextMode
-                                            sharedPrefs.edit().putInt("launch_mode", nextMode).apply()
+                                            sharedPrefs.edit { putInt("launch_mode", nextMode) }
                                             if (isHapticsEnabled) {
                                                 view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                                             }
@@ -645,11 +700,14 @@ fun HomeScreen(
                                         .clip(RoundedCornerShape(6.dp))
                                         .background(Color.White.copy(alpha = 0.15f))
                                         .clickable {
-                                            val enabledLayouts = KeyboardLayoutType.values().filter { layout ->
-                                                sharedPrefs.getStringSet("cycle_keyboard_layouts", KeyboardLayoutType.values().map { it.name }.toSet())?.contains(layout.name) == true
+                                            val savedSet = sharedPrefs.getStringSet("cycle_keyboard_layouts", null)
+                                            val enabledLayouts = if (savedSet == null) {
+                                                KeyboardLayoutType.entries
+                                            } else {
+                                                KeyboardLayoutType.entries.filter { savedSet.contains(it.name) }
                                             }.ifEmpty { listOf(selectedLayoutType) }
                                             val currentIndexInEnabled = enabledLayouts.indexOf(selectedLayoutType)
-                                            val nextIndex = (currentIndexInEnabled + 1) % enabledLayouts.size
+                                            val nextIndex = if (currentIndexInEnabled < 0) 0 else (currentIndexInEnabled + 1) % enabledLayouts.size
                                             selectedLayoutType = enabledLayouts[nextIndex]
                                             soundSynth.playPress()
                                         }
@@ -672,20 +730,20 @@ fun HomeScreen(
                                 }
 
                                 // 3. Switch Selector Pill
-                                val currentSwitch = soundSynth.getCurrentSwitch()
                                 Row(
                                     modifier = Modifier
                                         .height(28.dp)
                                         .clip(RoundedCornerShape(6.dp))
                                         .background(Color.White.copy(alpha = 0.15f))
                                         .clickable {
-                                            val enabledSwitches = SwitchType.values().filter { switch ->
-                                                sharedPrefs.getStringSet("cycle_key_sounds", SwitchType.values().map { it.name }.toSet())?.contains(switch.name) == true
+                                            val enabledSwitches = SwitchType.entries.filter { switch ->
+                                                sharedPrefs.getStringSet("cycle_key_sounds", SwitchType.entries.map { it.name }.toSet())?.contains(switch.name) == true
                                             }.ifEmpty { listOf(currentSwitch) }
                                             val currentIndexInEnabled = enabledSwitches.indexOf(currentSwitch)
                                             val nextIndex = (currentIndexInEnabled + 1) % enabledSwitches.size
                                             val nextSwitch = enabledSwitches[nextIndex]
                                             soundSynth.changeSwitchType(nextSwitch)
+                                            currentSwitch = nextSwitch
                                             soundSynth.playPress()
                                         }
                                         .padding(horizontal = 8.dp),
@@ -713,8 +771,8 @@ fun HomeScreen(
                                         .clip(RoundedCornerShape(6.dp))
                                         .background(Color.White.copy(alpha = 0.15f))
                                         .clickable {
-                                            val enabledColors = CaseColor.values().filter { color ->
-                                                sharedPrefs.getStringSet("cycle_case_colors", CaseColor.values().map { it.name }.toSet())?.contains(color.name) == true
+                                            val enabledColors = CaseColor.entries.filter { color ->
+                                                sharedPrefs.getStringSet("cycle_case_colors", CaseColor.entries.map { it.name }.toSet())?.contains(color.name) == true
                                             }.ifEmpty { listOf(selectedCaseColor) }
                                             val currentIndexInEnabled = enabledColors.indexOf(selectedCaseColor)
                                             val nextIndex = (currentIndexInEnabled + 1) % enabledColors.size
@@ -785,7 +843,7 @@ fun HomeScreen(
                                             val muted = !isMuted
                                             isMuted = muted
                                             soundSynth.setMute(muted)
-                                            sharedPrefs.edit().putBoolean("key_sound_enabled", !muted).apply()
+                                            sharedPrefs.edit { putBoolean("key_sound_enabled", !muted) }
                                         }
                                         .testTag("mute_toggle"),
                                     contentAlignment = Alignment.Center
@@ -827,8 +885,6 @@ fun HomeScreen(
                                     caseColor = selectedCaseColor,
                                     activePressedKeys = activePressedKeys,
                                     isConnected = isConnected,
-                                    rgbMode = selectedRgbMode,
-                                    timeProgress = rgbTimeProgress,
                                     isCapsLockActive = isCapsLockActive,
                                     isNumLockActive = isNumLockActive,
                                     isScrollLockActive = isScrollLockActive,
@@ -858,7 +914,7 @@ fun HomeScreen(
                                             android.widget.Toast.makeText(context, "${5 - easterEggClicks} more clicks to activate", android.widget.Toast.LENGTH_SHORT).show()
                                         } else {
                                             easterEggClicks = 0
-                                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
+                                            val intent = Intent(Intent.ACTION_VIEW, "https://www.youtube.com/watch?v=dQw4w9WgXcQ".toUri())
                                             context.startActivity(intent)
                                         }
                                     }
@@ -882,7 +938,7 @@ fun HomeScreen(
                         .padding(top = innerPadding.calculateTopPadding())
                         .background(MaterialTheme.colorScheme.background)
                 ) {
-                    if (btState is BluetoothState.BluetoothOff || btState is BluetoothState.Unsupported) {
+                    if (btState is BluetoothState.BluetoothOff || btState is BluetoothState.Unsupported || btState is BluetoothState.ProfileNotSupported) {
                         Column(
                             modifier = Modifier.fillMaxSize().padding(32.dp),
                             verticalArrangement = Arrangement.Center,
@@ -890,33 +946,66 @@ fun HomeScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.BluetoothDisabled,
-                                contentDescription = "Bluetooth Off",
+                                contentDescription = null,
                                 modifier = Modifier.size(80.dp),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(Modifier.height(24.dp))
                             Text(
-                                text = if (btState is BluetoothState.Unsupported) "Bluetooth Unsupported" else "Bluetooth is Off",
+                                text = when (btState) {
+                                    is BluetoothState.Unsupported -> "Bluetooth Not Supported"
+                                    is BluetoothState.ProfileNotSupported -> "HID Profile Not Supported"
+                                    else -> "Bluetooth is Off"
+                                },
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
                             )
                             Spacer(Modifier.height(12.dp))
-                            Text(
-                                text = "Please enable Bluetooth to connect devices.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            if (btState is BluetoothState.ProfileNotSupported) {
+                                Text(
+                                    text = "Your device's Bluetooth firmware does not support HID Device mode, which Bluke requires to act as a keyboard, mouse, or gamepad.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = "This is a manufacturer limitation and cannot be fixed by the app.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            } else {
+                                Text(
+                                    text = when (btState) {
+                                        is BluetoothState.Unsupported -> "This device does not have Bluetooth hardware."
+                                        else -> "Please enable Bluetooth to connect devices."
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
                             Spacer(Modifier.height(32.dp))
-                            if (btState !is BluetoothState.Unsupported) {
+                            if (btState is BluetoothState.BluetoothOff) {
                                 Button(
-                                    onClick = { 
+                                    onClick = {
                                         val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
                                         btLauncher.launch(enableBtIntent)
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                                 ) {
                                     Text("Turn On Bluetooth")
+                                }
+                            } else if (btState is BluetoothState.ProfileNotSupported) {
+                                OutlinedButton(
+                                    onClick = { btManager.checkBluetoothCapabilities() }
+                                ) {
+                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Retry")
                                 }
                             }
                         }
@@ -925,7 +1014,6 @@ fun HomeScreen(
                         var isDiscoveredExpanded by rememberSaveable { mutableStateOf(true) }
                         val connectedDeviceState by btManager.connectedDevice.collectAsState()
 
-                        val currentlyConnectedStateState by btManager.connectedDevice.collectAsState()
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -1039,16 +1127,25 @@ fun HomeScreen(
                                             }
                                         }
                                         
-                                        if (btState is BluetoothState.ProfileNotSupported || btMessage.contains("failed or stopped")) {
-                                            Spacer(modifier = Modifier.height(16.dp))
+                                        if (btState is BluetoothState.ReadyDisconnected || btMessage.lowercase().contains("failed") || btMessage.lowercase().contains("error")) {
+                                            Spacer(modifier = Modifier.height(12.dp))
                                             Button(
                                                 onClick = { btManager.restartHidService() },
-                                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer),
-                                                modifier = Modifier.fillMaxWidth()
+                                                modifier = Modifier.fillMaxWidth(),
+                                                shape = CircleShape,
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                                ),
+                                                contentPadding = PaddingValues(vertical = 12.dp, horizontal = 20.dp)
                                             ) {
-                                                Icon(imageVector = Icons.Default.Refresh, contentDescription = "Retry HID")
-                                                Spacer(Modifier.width(8.dp))
-                                                Text("Restart HID Service", fontWeight=FontWeight.Bold)
+                                                Icon(
+                                                    imageVector = Icons.Default.Refresh,
+                                                    contentDescription = "Restart HID",
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text("Restart HID Service", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
                                             }
                                         }
                                     }
@@ -1266,7 +1363,7 @@ fun HomeScreen(
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .background(
-                                androidx.compose.ui.graphics.Brush.verticalGradient(
+                                Brush.verticalGradient(
                                     colors = listOf(Color.Transparent, MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.background)
                                 )
                             )
@@ -1293,7 +1390,7 @@ fun HomeScreen(
                                     val currentIndex = enabledModes.indexOf(launchMode).coerceAtLeast(0)
                                     val nextMode = enabledModes[(currentIndex + 1) % enabledModes.size]
                                     launchMode = nextMode
-                                    sharedPrefs.edit().putInt("launch_mode", nextMode).apply()
+                                    sharedPrefs.edit { putInt("launch_mode", nextMode) }
                                     if (isHapticsEnabled) {
                                         view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                                     }

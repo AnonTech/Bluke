@@ -73,10 +73,10 @@ fun MyApplicationTheme(
       androidx.compose.runtime.mutableStateOf(sharedPrefs.getBoolean("dynamic_color", isDynamicColorDefault)) 
   }
   var accentColorIndex by androidx.compose.runtime.remember {
-      androidx.compose.runtime.mutableStateOf(sharedPrefs.getInt("accent_color_index", 0))
+      androidx.compose.runtime.mutableIntStateOf(sharedPrefs.getInt("accent_color_index", 0))
   }
   var themeMode by androidx.compose.runtime.remember {
-      androidx.compose.runtime.mutableStateOf(sharedPrefs.getInt("theme_mode", 0))
+      androidx.compose.runtime.mutableIntStateOf(sharedPrefs.getInt("theme_mode", 0))
   }
   var highContrastMode by androidx.compose.runtime.remember {
       androidx.compose.runtime.mutableStateOf(sharedPrefs.getBoolean("high_contrast_mode", false))
@@ -102,7 +102,6 @@ fun MyApplicationTheme(
 
   val isMonochrome = paletteStyle == "Monochrome"
   val isVibrant = paletteStyle == "Vibrant"
-  val isExpressive = paletteStyle == "Expressive"
 
   val baseColor = if (isMonochrome) {
       if (themeMode == 2 || (themeMode == 0 && darkTheme)) Color(0xFF6E6E6E) else Color(0xFF424242)
@@ -121,7 +120,7 @@ fun MyApplicationTheme(
       dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
         val baseScheme = if (useDarkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         if (useDarkTheme && highContrastMode) {
-            baseScheme.copy(background = androidx.compose.ui.graphics.Color.Black, surface = androidx.compose.ui.graphics.Color.Black, surfaceVariant = androidx.compose.ui.graphics.Color(0xFF1C1C1E))
+            baseScheme.copy(background = Color.Black, surface = Color.Black, surfaceVariant = Color(0xFF1C1C1E))
         } else baseScheme
       }
       useDarkTheme -> DarkColorScheme.copy(
@@ -129,9 +128,9 @@ fun MyApplicationTheme(
           primaryContainer = baseColor.copy(alpha = 0.3f),
           onPrimaryContainer = baseColor.copy(alpha = 0.9f),
           secondary = if (isVibrant) Color(0xFFE8DEF8) else if (isMonochrome) Color.LightGray else DarkColorScheme.secondary,
-          background = if (highContrastMode) androidx.compose.ui.graphics.Color.Black else DarkColorScheme.background,
-          surface = if (highContrastMode) androidx.compose.ui.graphics.Color.Black else DarkColorScheme.surface,
-          surfaceVariant = if (highContrastMode) androidx.compose.ui.graphics.Color(0xFF1C1C1E) else DarkColorScheme.surfaceVariant
+          background = if (highContrastMode) Color.Black else DarkColorScheme.background,
+          surface = if (highContrastMode) Color.Black else DarkColorScheme.surface,
+          surfaceVariant = if (highContrastMode) Color(0xFF1C1C1E) else DarkColorScheme.surfaceVariant
       )
       else -> LightColorScheme.copy(
           primary = baseColor,

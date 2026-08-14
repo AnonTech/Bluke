@@ -119,8 +119,8 @@ fun SettingsGroup(
 fun SettingsItem(
     title: String,
     subtitle: String? = null,
-    icon: @Composable() (() -> Unit)? = null,
-    action: @Composable() (() -> Unit)? = null,
+    icon: @Composable (() -> Unit)? = null,
+    action: @Composable (() -> Unit)? = null,
     onClick: (() -> Unit)? = null
 ) {
     Row(

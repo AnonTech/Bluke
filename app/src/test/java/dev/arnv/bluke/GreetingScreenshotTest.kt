@@ -23,7 +23,7 @@ class GreetingScreenshotTest {
   fun greeting_screenshot() {
     composeTestRule.setContent {
       MyApplicationTheme {
-        androidx.compose.material3.Text("KBSim Phone Keyboard")
+        androidx.compose.material3.Text("Bluke")
       }
     }
 

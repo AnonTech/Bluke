@@ -1,7 +1,6 @@
 package dev.arnv.bluke
 
 import android.Manifest
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -9,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -36,15 +36,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import dev.arnv.bluke.R
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import dev.arnv.bluke.ui.theme.MyApplicationTheme
 import dev.arnv.bluke.ui.theme.getCookieShape
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 class OnboardingActivity : ComponentActivity() {
 
@@ -56,14 +57,18 @@ class OnboardingActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         
         setContent {
-            MyApplicationTheme() {
+            MyApplicationTheme {
                 OnboardingScreen(
                     onComplete = {
-                        val prefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-                        prefs.edit().putBoolean("has_seen_onboarding", true).apply()
-                        prefs.edit().putBoolean("has_seen_help", true).apply()
+                        val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
+                        prefs.edit {
+                            putBoolean("has_seen_onboarding", true)
+                            putBoolean("has_seen_help", true)
+                            putInt("last_run_version_code", dev.arnv.bluke.BuildConfig.VERSION_CODE)
+                        }
                         startActivity(Intent(this@OnboardingActivity, MainActivity::class.java))
                         finish()
                     },
@@ -128,29 +133,30 @@ fun OnboardingScreen(
     val scope = rememberCoroutineScope()
     
     var permissionsGranted by remember { mutableStateOf(checkPermissions()) }
-    var permissionAttempts by remember { mutableStateOf(0) }
+    var permissionAttempts by remember { mutableIntStateOf(0) }
     // Check permissions periodically
     LaunchedEffect(pagerState.currentPage) {
         if (pagerState.currentPage == 1) {
             while(true) {
                 permissionsGranted = checkPermissions()
-                delay(500)
+                delay(500L.milliseconds)
             }
         }
     }
 
-    var timer by remember { mutableStateOf(5) }
+    var timer by remember { mutableIntStateOf(5) }
     LaunchedEffect(pagerState.currentPage) {
         if (pagerState.currentPage == 2) {
             timer = 5
             while (timer > 0) {
-                delay(1000)
+                delay(1000L.milliseconds)
                 timer -= 1
             }
         }
     }
 
     Scaffold(
+        modifier = Modifier.fillMaxSize().navigationBarsPadding().statusBarsPadding(),
         bottomBar = {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
@@ -161,13 +167,13 @@ fun OnboardingScreen(
                     modifier = Modifier.padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    val CookieShape7Indicator = getCookieShape(7)
-                    val PebbleShapeIndicator = androidx.compose.foundation.shape.RoundedCornerShape(percent = 35)
-                    val ArchShapeIndicatorRound = androidx.compose.foundation.shape.RoundedCornerShape(
+                    val cookieShape7Indicator = getCookieShape(7)
+                    val pebbleShapeIndicator = RoundedCornerShape(percent = 35)
+                    val archShapeIndicatorRound = RoundedCornerShape(
                         topStart = 16.dp, topEnd = 16.dp, bottomStart = 4.dp, bottomEnd = 4.dp
                     )
                     
-                    val paginationIndicatorsAndShapes = listOf(CookieShape7Indicator, PebbleShapeIndicator, ArchShapeIndicatorRound)
+                    val paginationIndicatorsAndShapes = listOf(cookieShape7Indicator, pebbleShapeIndicator, archShapeIndicatorRound)
                     
                     Row(
                         horizontalArrangement = Arrangement.Center,
@@ -178,9 +184,9 @@ fun OnboardingScreen(
                             val isSelected = pagerState.currentPage == iteration
                             val color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
                             val shape = if (isSelected) {
-                                paginationIndicatorsAndShapes.getOrElse(iteration) { CookieShape7Indicator }
+                                paginationIndicatorsAndShapes.getOrElse(iteration) { cookieShape7Indicator }
                             } else {
-                                androidx.compose.foundation.shape.CircleShape
+                                CircleShape
                             }
                             val size = if (isSelected) 22.dp else 12.dp
                             Box(
@@ -253,7 +259,7 @@ fun OnboardingScreen(
 
 @Composable
 fun WelcomePage() {
-    val CookieShape = getCookieShape(7)
+    val cookieShape = getCookieShape(7)
 
     Column(
         modifier = Modifier
@@ -263,7 +269,7 @@ fun WelcomePage() {
         verticalArrangement = Arrangement.Center
     ) {
         Surface(
-            shape = CookieShape,
+            shape = cookieShape,
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(120.dp)
         ) {
