@@ -79,6 +79,8 @@ fun HomeScreen(
     // The keyboard layout configured on the *host*, which decides how our scancodes are decoded.
     var hostLayoutId by remember { mutableStateOf(sharedPrefs.getString("host_layout", HostLayouts.DEFAULT.id)) }
     var unicodeEntryModeId by remember { mutableStateOf(sharedPrefs.getString("unicode_entry_mode", "off")) }
+    // The user's configured extra key rows for System Keyboard mode.
+    var imeKeyRows by remember { mutableStateOf(ImeKeyBar.load(sharedPrefs)) }
 
     // Sound synth switch state
     var currentSwitch by remember { mutableStateOf(soundSynth.getCurrentSwitch()) }
@@ -104,6 +106,7 @@ fun HomeScreen(
                 lockSyncMode = sharedPrefs.getString("lock_sync_mode", "host") ?: "host"
                 hostLayoutId = sharedPrefs.getString("host_layout", HostLayouts.DEFAULT.id)
                 unicodeEntryModeId = sharedPrefs.getString("unicode_entry_mode", "off")
+                imeKeyRows = ImeKeyBar.load(sharedPrefs)
                 val enabledModes = InputModes.enabled(sharedPrefs)
                 val savedLaunchMode = sharedPrefs.getInt("launch_mode", 0)
                 launchMode = if (enabledModes.contains(savedLaunchMode)) savedLaunchMode else enabledModes.first()
@@ -413,7 +416,8 @@ fun HomeScreen(
                             val nextMode = InputModes.next(sharedPrefs, launchMode)
                             launchMode = nextMode
                             sharedPrefs.edit { putInt("launch_mode", nextMode) }
-                        }
+                        },
+                        keyRows = ImeKeyBar.resolve(imeKeyRows)
                     )
                 }
                 else -> {

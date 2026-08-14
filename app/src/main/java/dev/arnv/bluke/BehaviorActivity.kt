@@ -26,8 +26,11 @@ import dev.arnv.bluke.ui.KeyboardLayoutType
 import dev.arnv.bluke.sound.SwitchType
 import dev.arnv.bluke.ui.CaseColor
 import dev.arnv.bluke.ui.HostLayouts
+import dev.arnv.bluke.ui.ImeKeyBar
+import dev.arnv.bluke.ui.ImeKeyBarEditorDialog
 import dev.arnv.bluke.ui.InputModes
 import dev.arnv.bluke.ui.UnicodeEntry
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.KeyboardAlt
 import androidx.compose.material.icons.filled.Language
@@ -71,6 +74,8 @@ class BehaviorActivity : ComponentActivity() {
                 var unicodeModeId by remember {
                     mutableStateOf(sharedPrefs.getString("unicode_entry_mode", "off") ?: "off")
                 }
+                var imeKeyRows by remember { mutableStateOf(ImeKeyBar.load(sharedPrefs)) }
+                var showKeyBarDialog by remember { mutableStateOf(false) }
                 var showHostLayoutDialog by remember { mutableStateOf(false) }
                 var showUnicodeDialog by remember { mutableStateOf(false) }
                 
@@ -174,9 +179,33 @@ class BehaviorActivity : ComponentActivity() {
                                     },
                                     icon = { Icon(Icons.Default.Translate, null, tint = MaterialTheme.colorScheme.primary) },
                                     onClick = { showUnicodeDialog = true }
+                                ),
+                                SettingsItemData(
+                                    title = "System Keyboard Keys",
+                                    subtitle = imeKeyRows.let { rows ->
+                                        val keyCount = rows.sumOf { it.size }
+                                        "$keyCount ${if (keyCount == 1) "key" else "keys"} in " +
+                                            "${rows.size} ${if (rows.size == 1) "row" else "rows"}. " +
+                                            "Pin the keys your keyboard hides - pipe, tilde, Home, " +
+                                            "function keys, host shortcuts."
+                                    },
+                                    icon = { Icon(Icons.Default.Dashboard, null, tint = MaterialTheme.colorScheme.primary) },
+                                    onClick = { showKeyBarDialog = true }
                                 )
                             )
                         )
+
+                        if (showKeyBarDialog) {
+                            ImeKeyBarEditorDialog(
+                                initialRows = imeKeyRows,
+                                onDismiss = { showKeyBarDialog = false },
+                                onSave = { newRows ->
+                                    ImeKeyBar.save(sharedPrefs, newRows)
+                                    imeKeyRows = ImeKeyBar.load(sharedPrefs)
+                                    showKeyBarDialog = false
+                                }
+                            )
+                        }
 
                         if (showHostLayoutDialog) {
                             AlertDialog(

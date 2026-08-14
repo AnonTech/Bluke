@@ -103,7 +103,9 @@ fun ImeInputView(
     unicodeMode: UnicodeEntry.UnicodeEntryMode,
     onStroke: (keyCode: Int, isPress: Boolean) -> Unit,
     onClose: () -> Unit,
-    onCycleMode: () -> Unit
+    onCycleMode: () -> Unit,
+    /** User-arranged extra key rows, resolved from [ImeKeyBar]. */
+    keyRows: List<List<ImeKeyBar.KeyDef>>
 ) {
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -390,97 +392,42 @@ fun ImeInputView(
             )
         }
 
-        // Keys a phone IME simply does not offer, but that anyone driving a computer needs
-        // constantly. These are the reason the staging field is kept small.
+        // The user's own key rows, configured in Behavior settings. These are the reason the staging
+        // field is kept small - most of what is here a phone IME either buries behind a symbol page
+        // or cannot produce at all.
         //
-        // Everything here is sent to the *host*: "Back" is the host's back navigation (Alt+Left in
+        // Everything is sent to the *host*: "Back" is the host's back navigation (Alt+Left in
         // browsers and file managers), not this phone's back gesture.
-
-        // Row 1: the symbols mobile keyboards bury behind two taps of a symbol page.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            ImeAuxKey("Tab", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_TAB) }
-            ImeAuxKey("Esc", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_ESC) }
-            // Pipe and friends are shifted on every layout we support, so they go through the same
-            // character translation as typed text rather than being hardcoded scancodes.
-            ImeAuxKey("|", Modifier.weight(1f)) { sendChar('|') }
-            ImeAuxKey("\\", Modifier.weight(1f)) { sendChar('\\') }
-            ImeAuxKey("/", Modifier.weight(1f)) { sendChar('/') }
-            ImeAuxKey("~", Modifier.weight(1f)) { sendChar('~') }
-            ImeAuxKey("`", Modifier.weight(1f)) { sendChar('`') }
-        }
-
-        // Row 2: caret movement and editing.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            ImeAuxKey("Home", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_HOME) }
-            ImeAuxKey("End", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_END) }
-            ImeAuxKey("PgUp", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_PAGEUP) }
-            ImeAuxKey("PgDn", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_PAGEDOWN) }
-            ImeAuxKey("Del", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_DELETE) }
-            ImeAuxKey("Enter", Modifier.weight(1f)) {
-                tapKey(KeyboardLayouts.KEY_ENTER)
-                fieldValue = TextFieldValue("")
-                sentText = ""
-            }
-        }
-
-        // Row 3: arrows, plus host back/forward navigation.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            ImeAuxKey("←", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_LEFT) }
-            ImeAuxKey("↑", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_UP) }
-            ImeAuxKey("↓", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_DOWN) }
-            ImeAuxKey("→", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_RIGHT) }
-            ImeAuxKey("Back", Modifier.weight(1f)) {
-                tapCombo(listOf(KeyboardLayouts.MOD_LALT), KeyboardLayouts.KEY_LEFT)
-            }
-            ImeAuxKey("Fwd", Modifier.weight(1f)) {
-                tapCombo(listOf(KeyboardLayouts.MOD_LALT), KeyboardLayouts.KEY_RIGHT)
-            }
-        }
-
-        // Row 4: the host's own launcher/overview, and the shortcuts worth a dedicated key.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            // Super on its own opens the Start menu / Activities overview / Spotlight-alike - the
-            // closest thing the host has to Android's Home button.
-            ImeAuxKey("Super", Modifier.weight(1f), testTagSuffix = "super") {
-                tapKey(KeyboardLayouts.MOD_LWIN)
-            }
-            ImeAuxKey("Copy", Modifier.weight(1f)) {
-                tapCombo(listOf(KeyboardLayouts.MOD_LCTRL), KeyboardLayouts.KEY_C)
-            }
-            ImeAuxKey("Paste", Modifier.weight(1f)) {
-                tapCombo(listOf(KeyboardLayouts.MOD_LCTRL), KeyboardLayouts.KEY_V)
-            }
-            ImeAuxKey("Alt+Tab", Modifier.weight(1f)) {
-                tapCombo(listOf(KeyboardLayouts.MOD_LALT), KeyboardLayouts.KEY_TAB)
-            }
-            ImeAuxKey("Ctrl+W", Modifier.weight(1f)) {
-                tapCombo(listOf(KeyboardLayouts.MOD_LCTRL), KeyboardLayouts.KEY_W)
-            }
-        }
-
-        // Cursor keys move the host's caret away from our staging buffer's tail, so the mirrored
-        // "already sent" text is no longer a safe basis for diffing. Clearing keeps the two in step.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            ImeAuxKey("Send clipboard", Modifier.weight(1f)) { sendClipboard() }
-            ImeAuxKey("Clear staged", Modifier.weight(1f)) {
-                fieldValue = TextFieldValue("")
-                sentText = ""
-                droppedNotice = null
+        keyRows.forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                row.forEach { def ->
+                    ImeAuxKey(def.label, Modifier.weight(1f), testTagSuffix = def.id) {
+                        when (val action = def.action) {
+                            is ImeKeyBar.Action.Key -> tapKey(action.keyCode)
+                            is ImeKeyBar.Action.Combo -> tapCombo(action.modifiers, action.keyCode)
+                            is ImeKeyBar.Action.Char -> sendChar(action.char)
+                            is ImeKeyBar.Action.Special -> when (action.builtin) {
+                                ImeKeyBar.Action.Builtin.SEND_CLIPBOARD -> sendClipboard()
+                                // Cursor and Enter keys move the host's caret away from our staging
+                                // buffer's tail, so the mirrored "already sent" text is no longer a
+                                // safe basis for diffing. Clearing keeps the two in step.
+                                ImeKeyBar.Action.Builtin.ENTER_AND_CLEAR -> {
+                                    tapKey(KeyboardLayouts.KEY_ENTER)
+                                    fieldValue = TextFieldValue("")
+                                    sentText = ""
+                                }
+                                ImeKeyBar.Action.Builtin.CLEAR_STAGED -> {
+                                    fieldValue = TextFieldValue("")
+                                    sentText = ""
+                                    droppedNotice = null
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
