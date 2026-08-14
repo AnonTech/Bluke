@@ -26,6 +26,7 @@ import dev.arnv.bluke.ui.KeyboardLayoutType
 import dev.arnv.bluke.sound.SwitchType
 import dev.arnv.bluke.ui.CaseColor
 import dev.arnv.bluke.ui.HostLayouts
+import dev.arnv.bluke.ui.InputModes
 import dev.arnv.bluke.ui.UnicodeEntry
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.KeyboardAlt
@@ -64,7 +65,6 @@ class BehaviorActivity : ComponentActivity() {
                 var autoConnectEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_connect", true)) }
                 var keySensitivity by remember { mutableFloatStateOf(sharedPrefs.getFloat("key_sensitivity", 6f)) }
                 var lockSyncMode by remember { mutableStateOf(sharedPrefs.getString("lock_sync_mode", "host") ?: "host") }
-                var useSystemIme by remember { mutableStateOf(sharedPrefs.getBoolean("use_system_ime", false)) }
                 var hostLayoutId by remember {
                     mutableStateOf(sharedPrefs.getString("host_layout", HostLayouts.DEFAULT.id) ?: HostLayouts.DEFAULT.id)
                 }
@@ -154,20 +154,6 @@ class BehaviorActivity : ComponentActivity() {
                         SettingsCardGroup(
                             title = "Input Method",
                             items = listOf(
-                                SettingsItemData(
-                                    title = "Use System Keyboard",
-                                    subtitle = "Type with your own IME (Gboard, Samsung Keyboard, ...) to get autocorrect, word suggestions, clipboard and translate panels. Committed text is relayed to the host as keystrokes.",
-                                    icon = { Icon(Icons.Default.KeyboardAlt, null, tint = MaterialTheme.colorScheme.primary) },
-                                    action = {
-                                        Switch(
-                                            checked = useSystemIme,
-                                            onCheckedChange = {
-                                                useSystemIme = it
-                                                sharedPrefs.edit().putBoolean("use_system_ime", it).apply()
-                                            }
-                                        )
-                                    }
-                                ),
                                 SettingsItemData(
                                     title = "Host Keyboard Layout",
                                     subtitle = HostLayouts.byId(hostLayoutId).let { layout ->
@@ -412,18 +398,16 @@ class BehaviorActivity : ComponentActivity() {
                                 .joinToString(", ") { it.displayName }
                         }
 
-                        val connectionModesDisplayMap = mapOf(
-                            "keyboard" to "Keyboard",
-                            "touchpad" to "Touchpad",
-                            "gamepad" to "Gamepad"
-                        )
+                        val allModeKeys = (0 until InputModes.ALL_COUNT).map { InputModes.prefKey(it) }
+                        val connectionModesDisplayMap = (0 until InputModes.ALL_COUNT)
+                            .associate { InputModes.prefKey(it) to InputModes.displayName(it) }
                         var activeModesSet by remember {
-                            mutableStateOf(sharedPrefs.getStringSet("cycle_connection_modes", setOf("keyboard", "touchpad", "gamepad")) ?: emptySet())
+                            mutableStateOf(sharedPrefs.getStringSet("cycle_connection_modes", InputModes.DEFAULT_ENABLED) ?: emptySet())
                         }
-                        val modesDescription = if (activeModesSet.size == 3) {
+                        val modesDescription = if (activeModesSet.size == InputModes.ALL_COUNT) {
                             "All input modes active in cycle"
                         } else {
-                            listOf("keyboard", "touchpad", "gamepad")
+                            allModeKeys
                                 .filter { activeModesSet.contains(it) }
                                 .mapNotNull { connectionModesDisplayMap[it] }
                                 .joinToString(", ")
@@ -818,11 +802,9 @@ class BehaviorActivity : ComponentActivity() {
                                     addAll(activeModesSet)
                                 }
                             }
-                            val allModes = listOf(
-                                "keyboard" to "Keyboard Mode",
-                                "touchpad" to "Touchpad Mode",
-                                "gamepad" to "Gamepad Mode"
-                            )
+                            val allModes = (0 until InputModes.ALL_COUNT).map {
+                                InputModes.prefKey(it) to "${InputModes.displayName(it)} Mode"
+                            }
                             AlertDialog(
                                 onDismissRequest = { showModesDialog = false },
                                 title = { Text("Input Modes to Cycle") },

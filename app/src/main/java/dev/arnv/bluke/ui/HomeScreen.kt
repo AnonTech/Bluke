@@ -76,8 +76,6 @@ fun HomeScreen(
     var keySensitivity by remember { mutableFloatStateOf(sharedPrefs.getFloat("key_sensitivity", 6f)) }
     var lockSyncMode by remember { mutableStateOf(sharedPrefs.getString("lock_sync_mode", "host") ?: "host") }
     var launchMode by rememberSaveable { mutableIntStateOf(sharedPrefs.getInt("launch_mode", 0)) }
-    // Hands typing over to the user's own IME (Gboard, Samsung Keyboard, ...) instead of Bluke's keycaps.
-    var useSystemIme by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("use_system_ime", false)) }
     // The keyboard layout configured on the *host*, which decides how our scancodes are decoded.
     var hostLayoutId by remember { mutableStateOf(sharedPrefs.getString("host_layout", HostLayouts.DEFAULT.id)) }
     var unicodeEntryModeId by remember { mutableStateOf(sharedPrefs.getString("unicode_entry_mode", "off")) }
@@ -104,18 +102,9 @@ fun HomeScreen(
                 isHapticsEnabled = sharedPrefs.getBoolean("haptics_enabled", true)
                 keySensitivity = sharedPrefs.getFloat("key_sensitivity", 6f)
                 lockSyncMode = sharedPrefs.getString("lock_sync_mode", "host") ?: "host"
-                useSystemIme = sharedPrefs.getBoolean("use_system_ime", false)
                 hostLayoutId = sharedPrefs.getString("host_layout", HostLayouts.DEFAULT.id)
                 unicodeEntryModeId = sharedPrefs.getString("unicode_entry_mode", "off")
-                val enabledModes = listOf(0, 1, 2).filter { mode ->
-                    val modeStr = when (mode) {
-                        0 -> "keyboard"
-                        1 -> "touchpad"
-                        2 -> "gamepad"
-                        else -> "keyboard"
-                    }
-                    sharedPrefs.getStringSet("cycle_connection_modes", setOf("keyboard", "touchpad", "gamepad"))?.contains(modeStr) == true
-                }.ifEmpty { listOf(0) }
+                val enabledModes = InputModes.enabled(sharedPrefs)
                 val savedLaunchMode = sharedPrefs.getInt("launch_mode", 0)
                 launchMode = if (enabledModes.contains(savedLaunchMode)) savedLaunchMode else enabledModes.first()
                 devModeRefreshTrigger++
@@ -231,9 +220,9 @@ fun HomeScreen(
         }
     }
 
-    // System IME mode needs the soft keyboard, which cannot share the screen with a forced-landscape
-    // immersive keyboard plate - so it is treated like being back on the config screen here.
-    val immersiveKeyboard = isKeyboardActive && !(launchMode == 0 && useSystemIme)
+    // System Keyboard mode needs the soft keyboard, which cannot share the screen with a
+    // forced-landscape immersive plate - so it stays portrait, like the config screen.
+    val immersiveKeyboard = isKeyboardActive && launchMode != InputModes.SYSTEM_KEYBOARD
 
     // Show Toast for connection errors, timeouts, rejections, or pairing failures
     LaunchedEffect(btMessage) {
@@ -363,7 +352,7 @@ fun HomeScreen(
             }
 
             when (launchMode) {
-                1, 2 -> {
+                InputModes.TOUCHPAD, InputModes.GAMEPAD -> {
                     val darkScheme = darkColorScheme(
                         primary = MaterialTheme.colorScheme.primary,
                         background = Color(0xFF141218),
@@ -375,7 +364,7 @@ fun HomeScreen(
                     )
                     MaterialTheme(colorScheme = darkScheme) {
                         when (launchMode) {
-                            1 -> {
+                            InputModes.TOUCHPAD -> {
                                 TouchpadView(
                                     btManager = btManager,
                                     onClose = { isKeyboardActive = false },
@@ -393,7 +382,7 @@ fun HomeScreen(
                                     }
                                 )
                             }
-                            2 -> {
+                            InputModes.GAMEPAD -> {
                                 GamepadView(
                                     btManager = btManager,
                                     onClose = { isKeyboardActive = false },
@@ -408,6 +397,24 @@ fun HomeScreen(
                             }
                         }
                     }
+                }
+                InputModes.SYSTEM_KEYBOARD -> {
+                    // Stays portrait and keeps the system bars: this mode needs the soft keyboard,
+                    // which cannot share the screen with the immersive landscape plate.
+                    ImeInputView(
+                        palette = Colorways.PALETTES[selectedLayoutType]
+                            ?: Colorways.PALETTES[KeyboardLayoutType.OBLIVION_75]!!,
+                        isConnected = isConnected,
+                        hostLayout = HostLayouts.byId(hostLayoutId),
+                        unicodeMode = UnicodeEntry.UnicodeEntryMode.byId(unicodeEntryModeId),
+                        onStroke = { code, press -> handleLocalKeyPress(code, press) },
+                        onClose = { isKeyboardActive = false },
+                        onCycleMode = {
+                            val nextMode = InputModes.next(sharedPrefs, launchMode)
+                            launchMode = nextMode
+                            sharedPrefs.edit { putInt("launch_mode", nextMode) }
+                        }
+                    )
                 }
                 else -> {
                     // Seamless full-screen canvas acting as the aluminum keyboard plate and chassis
@@ -467,18 +474,7 @@ fun HomeScreen(
                                         .clip(RoundedCornerShape(6.dp))
                                         .background(Color.White.copy(alpha = 0.15f))
                                         .clickable {
-                                            val enabledModes = listOf(0, 1, 2).filter { mode ->
-                                                val modeStr = when (mode) {
-                                                    0 -> "keyboard"
-                                                    1 -> "touchpad"
-                                                    2 -> "gamepad"
-                                                    else -> "keyboard"
-                                                }
-                                                sharedPrefs.getStringSet("cycle_connection_modes", setOf("keyboard", "touchpad", "gamepad"))?.contains(modeStr) == true
-                                            }.ifEmpty { listOf(0) }
-                                            val currentIndexInEnabled = enabledModes.indexOf(launchMode)
-                                            val nextIndex = (currentIndexInEnabled + 1) % enabledModes.size
-                                            val nextMode = enabledModes[nextIndex]
+                                            val nextMode = InputModes.next(sharedPrefs, launchMode)
                                             launchMode = nextMode
                                             sharedPrefs.edit { putInt("launch_mode", nextMode) }
                                             if (isHapticsEnabled) {
@@ -798,42 +794,7 @@ fun HomeScreen(
                                     )
                                 }
 
-                                // 5. Input Method Toggle Pill (Bluke keycaps vs. the user's own IME).
-                                // Only shown on the keycap side; ImeInputView carries its own way back.
-                                if (!useSystemIme) {
-                                    Row(
-                                        modifier = Modifier
-                                            .height(28.dp)
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(Color.White.copy(alpha = 0.15f))
-                                            .clickable {
-                                                useSystemIme = true
-                                                sharedPrefs.edit().putBoolean("use_system_ime", true).apply()
-                                                if (isHapticsEnabled) {
-                                                    view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                                                }
-                                            }
-                                            .padding(horizontal = 8.dp)
-                                            .testTag("system_ime_toggle"),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.KeyboardAlt,
-                                            contentDescription = "Use system keyboard",
-                                            tint = Color.White.copy(alpha = 0.9f),
-                                            modifier = Modifier.size(10.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = "System IME",
-                                            color = Color.White,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-
-                                // 6. Mute Speaker Button (Squarish, height 28dp, radius 6dp)
+                                // 5. Mute Speaker Button (Squarish, height 28dp, radius 6dp)
                                 Box(
                                     modifier = Modifier
                                         .size(28.dp)
@@ -866,32 +827,17 @@ fun HomeScreen(
                                 .padding(horizontal = 6.dp, vertical = 2.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (useSystemIme) {
-                                ImeInputView(
-                                    palette = Colorways.PALETTES[selectedLayoutType]
-                                        ?: Colorways.PALETTES[KeyboardLayoutType.OBLIVION_75]!!,
-                                    isConnected = isConnected,
-                                    hostLayout = HostLayouts.byId(hostLayoutId),
-                                    unicodeMode = UnicodeEntry.UnicodeEntryMode.byId(unicodeEntryModeId),
-                                    onStroke = { code, press -> handleLocalKeyPress(code, press) },
-                                    onExitImeMode = {
-                                        useSystemIme = false
-                                        sharedPrefs.edit().putBoolean("use_system_ime", false).apply()
-                                    }
-                                )
-                            } else {
-                                KeyboardView(
-                                    layoutType = selectedLayoutType,
-                                    caseColor = selectedCaseColor,
-                                    activePressedKeys = activePressedKeys,
-                                    isConnected = isConnected,
-                                    isCapsLockActive = isCapsLockActive,
-                                    isNumLockActive = isNumLockActive,
-                                    isScrollLockActive = isScrollLockActive,
-                                    keySensitivity = keySensitivity,
-                                    onKeyPressChange = { code, press -> handleLocalKeyPress(code, press) }
-                                )
-                            }
+                            KeyboardView(
+                                layoutType = selectedLayoutType,
+                                caseColor = selectedCaseColor,
+                                activePressedKeys = activePressedKeys,
+                                isConnected = isConnected,
+                                isCapsLockActive = isCapsLockActive,
+                                isNumLockActive = isNumLockActive,
+                                isScrollLockActive = isScrollLockActive,
+                                keySensitivity = keySensitivity,
+                                onKeyPressChange = { code, press -> handleLocalKeyPress(code, press) }
+                            )
                         }
                     }
                 }
@@ -1378,17 +1324,7 @@ fun HomeScreen(
                             // Circular Mode Toggle Indicator Button
                             IconButton(
                                 onClick = {
-                                    val enabledModes = listOf(0, 1, 2).filter { mode ->
-                                        val modeStr = when (mode) {
-                                            0 -> "keyboard"
-                                            1 -> "touchpad"
-                                            2 -> "gamepad"
-                                            else -> "keyboard"
-                                        }
-                                        sharedPrefs.getStringSet("cycle_connection_modes", setOf("keyboard", "touchpad", "gamepad"))?.contains(modeStr) == true
-                                    }.ifEmpty { listOf(0) }
-                                    val currentIndex = enabledModes.indexOf(launchMode).coerceAtLeast(0)
-                                    val nextMode = enabledModes[(currentIndex + 1) % enabledModes.size]
+                                    val nextMode = InputModes.next(sharedPrefs, launchMode)
                                     launchMode = nextMode
                                     sharedPrefs.edit { putInt("launch_mode", nextMode) }
                                     if (isHapticsEnabled) {
@@ -1402,8 +1338,9 @@ fun HomeScreen(
                                     .testTag("mode_toggle_btn")
                             ) {
                                 val modeIcon = when (launchMode) {
-                                    1 -> Icons.Default.Mouse
-                                    2 -> Icons.Default.SportsEsports
+                                    InputModes.TOUCHPAD -> Icons.Default.Mouse
+                                    InputModes.GAMEPAD -> Icons.Default.SportsEsports
+                                    InputModes.SYSTEM_KEYBOARD -> Icons.Default.KeyboardAlt
                                     else -> Icons.Default.Keyboard
                                 }
                                 Icon(
@@ -1426,11 +1363,7 @@ fun HomeScreen(
                                     containerColor = MaterialTheme.colorScheme.primary
                                 )
                             ) {
-                                val launchText = when (launchMode) {
-                                    1 -> "Launch Touchpad"
-                                    2 -> "Launch Gamepad"
-                                    else -> "Launch Keyboard"
-                                }
+                                val launchText = "Launch ${InputModes.displayName(launchMode)}"
                                 Icon(
                                     imageVector = Icons.Default.KeyboardArrowUp,
                                     contentDescription = "Launch Icon",

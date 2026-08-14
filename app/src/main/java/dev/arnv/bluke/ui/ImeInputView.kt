@@ -102,7 +102,8 @@ fun ImeInputView(
     hostLayout: HostLayouts.HostLayout,
     unicodeMode: UnicodeEntry.UnicodeEntryMode,
     onStroke: (keyCode: Int, isPress: Boolean) -> Unit,
-    onExitImeMode: () -> Unit
+    onClose: () -> Unit,
+    onCycleMode: () -> Unit
 ) {
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -190,6 +191,37 @@ fun ImeInputView(
         queue(listOf(keyCode to true, keyCode to false))
     }
 
+    /**
+     * Types a single character through the host layout mapping.
+     *
+     * Symbols like `|` sit behind different shift/AltGr combinations on each layout, so they must go
+     * through the same translation as typed text instead of a fixed scancode. Bypasses the staging
+     * buffer: these are one-shot punches, not text the IME should try to autocorrect.
+     */
+    fun sendChar(char: Char) {
+        val translation = HidCharMap.translate(char.toString(), hostLayout, unicodeMode)
+        if (translation.events.isEmpty()) {
+            statusNotice = "$char is not available on a ${hostLayout.displayName} keyboard"
+            return
+        }
+        queue(translation.events.map { it.keyCode to it.isPress })
+    }
+
+    /**
+     * Sends [keyCode] while [modifiers] are held, then releases everything in reverse order.
+     *
+     * Used for host navigation shortcuts (Alt+Left for Back, and so on) where the interesting part
+     * is the combination rather than the key itself.
+     */
+    fun tapCombo(modifiers: List<Int>, keyCode: Int) {
+        val out = mutableListOf<Pair<Int, Boolean>>()
+        modifiers.forEach { out.add(it to true) }
+        out.add(keyCode to true)
+        out.add(keyCode to false)
+        modifiers.reversed().forEach { out.add(it to false) }
+        queue(out)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -224,40 +256,67 @@ fun ImeInputView(
                 )
             }
             Row(
-                modifier = Modifier
-                    .height(30.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color.White.copy(alpha = 0.15f))
-                    .clickable {
-                        keyboardController?.hide()
-                        onExitImeMode()
-                    }
-                    .padding(horizontal = 10.dp)
-                    .testTag("exit_ime_mode_btn"),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.Keyboard,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(12.dp)
-                )
-                Text(
-                    text = "Bluke Keys",
-                    color = Color.White,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                // Cycle on to the next input mode, matching the pill the other modes carry.
+                Row(
+                    modifier = Modifier
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.White.copy(alpha = 0.15f))
+                        .clickable {
+                            keyboardController?.hide()
+                            onCycleMode()
+                        }
+                        .padding(horizontal = 10.dp)
+                        .testTag("ime_mode_cycle_btn"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Autorenew,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Text(
+                        text = "Mode",
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.White.copy(alpha = 0.15f))
+                        .clickable {
+                            keyboardController?.hide()
+                            onClose()
+                        }
+                        .testTag("ime_close_btn"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
             }
         }
 
         // The staging buffer. Text lands here first so the IME can correct it in place; every
         // change is diffed against what the host already has.
+        // Deliberately short: this is a staging line, not a document. The space it gives up goes to
+        // the key rows below, which are what a physical-keyboard user actually reaches for.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
+                .heightIn(min = 56.dp, max = 96.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .background(Color.Black.copy(alpha = 0.35f))
                 .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(10.dp))
@@ -301,7 +360,7 @@ fun ImeInputView(
                     }
                 ),
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
                     .focusRequester(focusRequester)
                     .testTag("ime_input_field")
@@ -331,33 +390,94 @@ fun ImeInputView(
             )
         }
 
-        // Keys the IME cannot express as text but that a physical keyboard user still needs.
+        // Keys a phone IME simply does not offer, but that anyone driving a computer needs
+        // constantly. These are the reason the staging field is kept small.
+        //
+        // Everything here is sent to the *host*: "Back" is the host's back navigation (Alt+Left in
+        // browsers and file managers), not this phone's back gesture.
+
+        // Row 1: the symbols mobile keyboards bury behind two taps of a symbol page.
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            ImeAuxKey("Esc", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_ESC) }
             ImeAuxKey("Tab", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_TAB) }
+            ImeAuxKey("Esc", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_ESC) }
+            // Pipe and friends are shifted on every layout we support, so they go through the same
+            // character translation as typed text rather than being hardcoded scancodes.
+            ImeAuxKey("|", Modifier.weight(1f)) { sendChar('|') }
+            ImeAuxKey("\\", Modifier.weight(1f)) { sendChar('\\') }
+            ImeAuxKey("/", Modifier.weight(1f)) { sendChar('/') }
+            ImeAuxKey("~", Modifier.weight(1f)) { sendChar('~') }
+            ImeAuxKey("`", Modifier.weight(1f)) { sendChar('`') }
+        }
+
+        // Row 2: caret movement and editing.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            ImeAuxKey("Home", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_HOME) }
+            ImeAuxKey("End", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_END) }
+            ImeAuxKey("PgUp", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_PAGEUP) }
+            ImeAuxKey("PgDn", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_PAGEDOWN) }
+            ImeAuxKey("Del", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_DELETE) }
             ImeAuxKey("Enter", Modifier.weight(1f)) {
                 tapKey(KeyboardLayouts.KEY_ENTER)
                 fieldValue = TextFieldValue("")
                 sentText = ""
             }
+        }
+
+        // Row 3: arrows, plus host back/forward navigation.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
             ImeAuxKey("←", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_LEFT) }
             ImeAuxKey("↑", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_UP) }
             ImeAuxKey("↓", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_DOWN) }
             ImeAuxKey("→", Modifier.weight(1f)) { tapKey(KeyboardLayouts.KEY_RIGHT) }
+            ImeAuxKey("Back", Modifier.weight(1f)) {
+                tapCombo(listOf(KeyboardLayouts.MOD_LALT), KeyboardLayouts.KEY_LEFT)
+            }
+            ImeAuxKey("Fwd", Modifier.weight(1f)) {
+                tapCombo(listOf(KeyboardLayouts.MOD_LALT), KeyboardLayouts.KEY_RIGHT)
+            }
+        }
+
+        // Row 4: the host's own launcher/overview, and the shortcuts worth a dedicated key.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            // Super on its own opens the Start menu / Activities overview / Spotlight-alike - the
+            // closest thing the host has to Android's Home button.
+            ImeAuxKey("Super", Modifier.weight(1f), testTagSuffix = "super") {
+                tapKey(KeyboardLayouts.MOD_LWIN)
+            }
+            ImeAuxKey("Copy", Modifier.weight(1f)) {
+                tapCombo(listOf(KeyboardLayouts.MOD_LCTRL), KeyboardLayouts.KEY_C)
+            }
+            ImeAuxKey("Paste", Modifier.weight(1f)) {
+                tapCombo(listOf(KeyboardLayouts.MOD_LCTRL), KeyboardLayouts.KEY_V)
+            }
+            ImeAuxKey("Alt+Tab", Modifier.weight(1f)) {
+                tapCombo(listOf(KeyboardLayouts.MOD_LALT), KeyboardLayouts.KEY_TAB)
+            }
+            ImeAuxKey("Ctrl+W", Modifier.weight(1f)) {
+                tapCombo(listOf(KeyboardLayouts.MOD_LCTRL), KeyboardLayouts.KEY_W)
+            }
         }
 
         // Cursor keys move the host's caret away from our staging buffer's tail, so the mirrored
         // "already sent" text is no longer a safe basis for diffing. Clearing keeps the two in step.
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             ImeAuxKey("Send clipboard", Modifier.weight(1f)) { sendClipboard() }
-            ImeAuxKey("Clear staged text", Modifier.weight(1f)) {
+            ImeAuxKey("Clear staged", Modifier.weight(1f)) {
                 fieldValue = TextFieldValue("")
                 sentText = ""
                 droppedNotice = null
@@ -370,23 +490,26 @@ fun ImeInputView(
 private fun ImeAuxKey(
     label: String,
     modifier: Modifier = Modifier,
+    /** Distinguishes keys that share a label, e.g. the host's Home key and the Super/launcher key. */
+    testTagSuffix: String? = null,
     onClick: () -> Unit
 ) {
     Box(
         modifier = modifier
-            .height(34.dp)
+            .height(38.dp)
             .clip(RoundedCornerShape(6.dp))
             .background(Color.White.copy(alpha = 0.12f))
             .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
             .clickable { onClick() }
-            .testTag("ime_aux_$label"),
+            .testTag("ime_aux_${testTagSuffix ?: label}"),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = label,
             color = Color.White.copy(alpha = 0.9f),
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
         )
     }
 }
