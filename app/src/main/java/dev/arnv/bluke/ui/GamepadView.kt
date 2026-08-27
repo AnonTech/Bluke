@@ -350,20 +350,29 @@ fun GamepadView(
     var rightStickY by remember { mutableFloatStateOf(0f) }
 
     val transmitGamepadState = { force: Boolean ->
-        val now = System.currentTimeMillis()
-        if (force || now - lastGamepadReportTime >= 8L) {
-            btManager.sendGamepadReport(
-                buttonMask,
-                leftStickX,
-                leftStickY,
-                rightStickX,
-                rightStickY,
-                dpadHat
-            )
-            lastGamepadReportTime = now
+        if (isEditMode) {
+            // Edit mode's drag-to-reposition overlay sits on top of every control's own touch
+            // handler and can't stop it from also firing (Compose doesn't let a consumed touch
+            // be hidden from a sibling that opted into unconsumed-or-not delivery, which every
+            // control here does for multi-touch reasons). Block sends at the source instead so
+            // repositioning a button never reaches the connected host as a live keypress.
             isGamepadDirty = false
         } else {
-            isGamepadDirty = true
+            val now = System.currentTimeMillis()
+            if (force || now - lastGamepadReportTime >= 8L) {
+                btManager.sendGamepadReport(
+                    buttonMask,
+                    leftStickX,
+                    leftStickY,
+                    rightStickX,
+                    rightStickY,
+                    dpadHat
+                )
+                lastGamepadReportTime = now
+                isGamepadDirty = false
+            } else {
+                isGamepadDirty = true
+            }
         }
     }
 
@@ -1200,13 +1209,12 @@ private fun Color.gpLighter(factor: Float = 0.25f): Color {
 private fun GamepadFaceButton(
     button: ButtonDef,
     isXboxStyle: Boolean,
-    onPress: (Int) -> Unit,
-    onRelease: (Int) -> Unit,
     modifier: Modifier = Modifier,
     externalIsPressed: Boolean = false
 ) {
-    var internalIsPressed by remember { mutableStateOf(false) }
-    val isPressed = internalIsPressed || externalIsPressed
+    // Press/release is owned entirely by the parent FaceButtonsDiamond's proximity touch layer
+    // (the only caller of this composable) so a tap isn't reported twice - see externalIsPressed.
+    val isPressed = externalIsPressed
 
     val pressOffsetY by animateDpAsState(
         targetValue = if (isPressed) 0.6.dp else 0.dp,
@@ -1249,12 +1257,7 @@ private fun GamepadFaceButton(
                     scaleX = pressScale
                     scaleY = pressScale
                 }
-                .clip(CircleShape)
-                .gamepadButtonTouch(
-                    onPress = { onPress(button.mappingId) },
-                    onRelease = { onRelease(button.mappingId) },
-                    onPressedStateChange = { internalIsPressed = it }
-                ),
+                .clip(CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -1456,10 +1459,10 @@ private fun FaceButtonsDiamond(
             },
         contentAlignment = Alignment.Center
     ) {
-        GamepadFaceButton(config.faceTop, isXboxStyle, onPress, onRelease, Modifier.offset(y = -spacing), externalIsPressed = activePressedButtons.contains(config.faceTop.mappingId))
-        GamepadFaceButton(config.faceRight, isXboxStyle, onPress, onRelease, Modifier.offset(x = spacing), externalIsPressed = activePressedButtons.contains(config.faceRight.mappingId))
-        GamepadFaceButton(config.faceBottom, isXboxStyle, onPress, onRelease, Modifier.offset(y = spacing), externalIsPressed = activePressedButtons.contains(config.faceBottom.mappingId))
-        GamepadFaceButton(config.faceLeft, isXboxStyle, onPress, onRelease, Modifier.offset(x = -spacing), externalIsPressed = activePressedButtons.contains(config.faceLeft.mappingId))
+        GamepadFaceButton(config.faceTop, isXboxStyle, Modifier.offset(y = -spacing), externalIsPressed = activePressedButtons.contains(config.faceTop.mappingId))
+        GamepadFaceButton(config.faceRight, isXboxStyle, Modifier.offset(x = spacing), externalIsPressed = activePressedButtons.contains(config.faceRight.mappingId))
+        GamepadFaceButton(config.faceBottom, isXboxStyle, Modifier.offset(y = spacing), externalIsPressed = activePressedButtons.contains(config.faceBottom.mappingId))
+        GamepadFaceButton(config.faceLeft, isXboxStyle, Modifier.offset(x = -spacing), externalIsPressed = activePressedButtons.contains(config.faceLeft.mappingId))
     }
 }
 
