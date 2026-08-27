@@ -44,6 +44,20 @@ sealed class BluetoothState {
 
 class BluetoothKeyboardManager(private val context: Context) {
 
+    companion object {
+        // HID hat-switch values per the USB HID spec: 0-7 walk clockwise from North,
+        // 8 (out of the descriptor's declared 0-7 logical range) reports "centered" via the Null flag.
+        const val HAT_NORTH = 0
+        const val HAT_NORTHEAST = 1
+        const val HAT_EAST = 2
+        const val HAT_SOUTHEAST = 3
+        const val HAT_SOUTH = 4
+        const val HAT_SOUTHWEST = 5
+        const val HAT_WEST = 6
+        const val HAT_NORTHWEST = 7
+        const val HAT_NEUTRAL = 8
+    }
+
     private val reportExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread({
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_FOREGROUND)
@@ -302,20 +316,30 @@ class BluetoothKeyboardManager(private val context: Context) {
         0x85.toByte(), 0x03.toByte(),         //   REPORT_ID (3)
         0x05.toByte(), 0x09.toByte(),         //   USAGE_PAGE (Button)
         0x19.toByte(), 0x01.toByte(),         //     USAGE_MINIMUM (Button 1)
-        0x29.toByte(), 0x12.toByte(),         //     USAGE_MAXIMUM (Button 18)
+        0x29.toByte(), 0x0e.toByte(),         //     USAGE_MAXIMUM (Button 14)
         0x15.toByte(), 0x00.toByte(),         //     LOGICAL_MINIMUM (0)
         0x25.toByte(), 0x01.toByte(),         //     LOGICAL_MAXIMUM (1)
         0x75.toByte(), 0x01.toByte(),         //     REPORT_SIZE (1)
-        0x95.toByte(), 0x12.toByte(),         //     REPORT_COUNT (18)
-        0x81.toByte(), 0x02.toByte(),         //     INPUT (Data,Var,Abs) - 18 Buttons
+        0x95.toByte(), 0x0e.toByte(),         //     REPORT_COUNT (14)
+        0x81.toByte(), 0x02.toByte(),         //     INPUT (Data,Var,Abs) - 14 Buttons
+        0x05.toByte(), 0x01.toByte(),         //     USAGE_PAGE (Generic Desktop)
+        0x09.toByte(), 0x39.toByte(),         //     USAGE (Hat Switch) - D-Pad as a proper POV hat
+        0x15.toByte(), 0x00.toByte(),         //     LOGICAL_MINIMUM (0)
+        0x25.toByte(), 0x07.toByte(),         //     LOGICAL_MAXIMUM (7)
+        0x35.toByte(), 0x00.toByte(),         //     PHYSICAL_MINIMUM (0)
+        0x46.toByte(), 0x3b.toByte(), 0x01.toByte(), // PHYSICAL_MAXIMUM (315)
+        0x65.toByte(), 0x14.toByte(),         //     UNIT (Eng Rot:Angular Pos)
+        0x75.toByte(), 0x04.toByte(),         //     REPORT_SIZE (4)
+        0x95.toByte(), 0x01.toByte(),         //     REPORT_COUNT (1)
+        0x81.toByte(), 0x42.toByte(),         //     INPUT (Data,Var,Abs,Null) - Hat switch, out-of-range = centered
+        0x65.toByte(), 0x00.toByte(),         //     UNIT (None) - reset so it doesn't leak into the axes below
         0x75.toByte(), 0x01.toByte(),         //     REPORT_SIZE (1)
         0x95.toByte(), 0x06.toByte(),         //     REPORT_COUNT (6)
         0x81.toByte(), 0x03.toByte(),         //     INPUT (Cnst,Var,Abs) - padding to 3 bytes
-        0x05.toByte(), 0x01.toByte(),         //     USAGE_PAGE (Generic Desktop)
         0x09.toByte(), 0x30.toByte(),         //     USAGE (X) - Left Stick X
         0x09.toByte(), 0x31.toByte(),         //     USAGE (Y) - Left Stick Y
-        0x09.toByte(), 0x32.toByte(),         //     USAGE (Rx) - Right Stick X
-        0x09.toByte(), 0x33.toByte(),         //     USAGE (Ry) - Right Stick Y
+        0x09.toByte(), 0x33.toByte(),         //     USAGE (Rx) - Right Stick X
+        0x09.toByte(), 0x34.toByte(),         //     USAGE (Ry) - Right Stick Y
         0x15.toByte(), 0x00.toByte(),         //     LOGICAL_MINIMUM (0)
         0x27.toByte(), 0xff.toByte(), 0xff.toByte(), 0x00.toByte(), 0x00.toByte(), // LOGICAL_MAXIMUM (65535)
         0x75.toByte(), 0x10.toByte(),         //     REPORT_SIZE (16)
@@ -1051,14 +1075,19 @@ class BluetoothKeyboardManager(private val context: Context) {
         leftXFloat: Float,
         leftYFloat: Float,
         rightXFloat: Float,
-        rightYFloat: Float
+        rightYFloat: Float,
+        dpadHat: Int = HAT_NEUTRAL
     ) {
         val dev = _connectedDevice.value
         if (dev != null) {
             val report = ByteArray(11)
-            report[0] = (buttonMask and 0xFF).toByte()
-            report[1] = ((buttonMask shr 8) and 0xFF).toByte()
-            report[2] = ((buttonMask shr 16) and 0xFF).toByte()
+            // 14 buttons (bits 0-13) + 4-bit hat switch (bits 14-17) + 6 bits padding, matching the descriptor.
+            val buttons14 = buttonMask and 0x3FFF
+            val hat = dpadHat and 0xF
+            val bits = buttons14 or (hat shl 14)
+            report[0] = (bits and 0xFF).toByte()
+            report[1] = ((bits shr 8) and 0xFF).toByte()
+            report[2] = ((bits shr 16) and 0xFF).toByte()
 
             // Convert normalized -1.0f..1.0f to 16-bit unsigned 0..65535 (32768 center)
             val lx = ((leftXFloat.coerceIn(-1f, 1f) + 1f) * 32767.5f).toInt().coerceIn(0, 65535)
