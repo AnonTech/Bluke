@@ -73,7 +73,7 @@ private data class ConsoleConfig(
     val selectButton: ButtonDef,
     val startButton: ButtonDef,
     val guideButton: ButtonDef,
-    val shareButton: ButtonDef = ButtonDef("SHARE", 17),
+    val shareButton: ButtonDef = ButtonDef("SHARE", 13),
     val leftStickAboveDpad: Boolean = true,
     val hasTouchpad: Boolean = false,
     val touchpadMappingId: Int = -1
@@ -93,8 +93,8 @@ private val CONSOLES = listOf(
         rightTrigger = ButtonDef("RT", 7),
         selectButton = ButtonDef("VIEW", 8),
         startButton = ButtonDef("MENU", 9),
-        guideButton = ButtonDef("XBOX", 16, Color(0xFF2E7D32)),
-        shareButton = ButtonDef("SHARE", 17),
+        guideButton = ButtonDef("XBOX", 12, Color(0xFF2E7D32)),
+        shareButton = ButtonDef("SHARE", 13),
         leftStickAboveDpad = true
     ),
     ConsoleConfig(
@@ -110,8 +110,8 @@ private val CONSOLES = listOf(
         rightTrigger = ButtonDef("R2", 7),
         selectButton = ButtonDef("CREATE", 8),
         startButton = ButtonDef("OPTIONS", 9),
-        guideButton = ButtonDef("PS", 16, Color(0xFF1565C0)),
-        shareButton = ButtonDef("SHARE", 17),
+        guideButton = ButtonDef("PS", 12, Color(0xFF1565C0)),
+        shareButton = ButtonDef("SHARE", 13),
         leftStickAboveDpad = false,
         hasTouchpad = true,
         touchpadMappingId = 18
@@ -340,28 +340,39 @@ fun GamepadView(
     val deviceName = connectedDevNow?.name ?: "No Host"
 
     var buttonMask by remember { mutableIntStateOf(0) }
+    var dpadHat by remember { mutableIntStateOf(BluetoothKeyboardManager.HAT_NEUTRAL) }
     var lastGamepadReportTime by remember { mutableLongStateOf(0L) }
     var isGamepadDirty by remember { mutableStateOf(false) }
-    
+
     var leftStickX by remember { mutableFloatStateOf(0f) }
     var leftStickY by remember { mutableFloatStateOf(0f) }
     var rightStickX by remember { mutableFloatStateOf(0f) }
     var rightStickY by remember { mutableFloatStateOf(0f) }
 
     val transmitGamepadState = { force: Boolean ->
-        val now = System.currentTimeMillis()
-        if (force || now - lastGamepadReportTime >= 8L) {
-            btManager.sendGamepadReport(
-                buttonMask,
-                leftStickX,
-                leftStickY,
-                rightStickX,
-                rightStickY
-            )
-            lastGamepadReportTime = now
+        if (isEditMode) {
+            // Edit mode's drag-to-reposition overlay sits on top of every control's own touch
+            // handler and can't stop it from also firing (Compose doesn't let a consumed touch
+            // be hidden from a sibling that opted into unconsumed-or-not delivery, which every
+            // control here does for multi-touch reasons). Block sends at the source instead so
+            // repositioning a button never reaches the connected host as a live keypress.
             isGamepadDirty = false
         } else {
-            isGamepadDirty = true
+            val now = System.currentTimeMillis()
+            if (force || now - lastGamepadReportTime >= 8L) {
+                btManager.sendGamepadReport(
+                    buttonMask,
+                    leftStickX,
+                    leftStickY,
+                    rightStickX,
+                    rightStickY,
+                    dpadHat
+                )
+                lastGamepadReportTime = now
+                isGamepadDirty = false
+            } else {
+                isGamepadDirty = true
+            }
         }
     }
 
@@ -374,7 +385,8 @@ fun GamepadView(
                     leftStickX,
                     leftStickY,
                     rightStickX,
-                    rightStickY
+                    rightStickY,
+                    dpadHat
                 )
                 lastGamepadReportTime = System.currentTimeMillis()
                 isGamepadDirty = false
@@ -601,8 +613,7 @@ fun GamepadView(
                             GamepadDpad(
                                 isXboxStyle = true,
                                 onDpadChange = { mask ->
-                                    val cleared = buttonMask and (0xF shl 12).inv()
-                                    buttonMask = cleared or (mask shl 12)
+                                    dpadHat = dpadMaskToHat(mask)
                                     transmitGamepadState(true)
                                     if (mask != 0) triggerVibration(15)
                                 }
@@ -790,8 +801,7 @@ fun GamepadView(
                             GamepadDpad(
                                 isXboxStyle = false,
                                 onDpadChange = { mask ->
-                                    val cleared = buttonMask and (0xF shl 12).inv()
-                                    buttonMask = cleared or (mask shl 12)
+                                    dpadHat = dpadMaskToHat(mask)
                                     transmitGamepadState(true)
                                     if (mask != 0) triggerVibration(15)
                                 }
@@ -1199,13 +1209,12 @@ private fun Color.gpLighter(factor: Float = 0.25f): Color {
 private fun GamepadFaceButton(
     button: ButtonDef,
     isXboxStyle: Boolean,
-    onPress: (Int) -> Unit,
-    onRelease: (Int) -> Unit,
     modifier: Modifier = Modifier,
     externalIsPressed: Boolean = false
 ) {
-    var internalIsPressed by remember { mutableStateOf(false) }
-    val isPressed = internalIsPressed || externalIsPressed
+    // Press/release is owned entirely by the parent FaceButtonsDiamond's proximity touch layer
+    // (the only caller of this composable) so a tap isn't reported twice - see externalIsPressed.
+    val isPressed = externalIsPressed
 
     val pressOffsetY by animateDpAsState(
         targetValue = if (isPressed) 0.6.dp else 0.dp,
@@ -1248,12 +1257,7 @@ private fun GamepadFaceButton(
                     scaleX = pressScale
                     scaleY = pressScale
                 }
-                .clip(CircleShape)
-                .gamepadButtonTouch(
-                    onPress = { onPress(button.mappingId) },
-                    onRelease = { onRelease(button.mappingId) },
-                    onPressedStateChange = { internalIsPressed = it }
-                ),
+                .clip(CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -1455,10 +1459,10 @@ private fun FaceButtonsDiamond(
             },
         contentAlignment = Alignment.Center
     ) {
-        GamepadFaceButton(config.faceTop, isXboxStyle, onPress, onRelease, Modifier.offset(y = -spacing), externalIsPressed = activePressedButtons.contains(config.faceTop.mappingId))
-        GamepadFaceButton(config.faceRight, isXboxStyle, onPress, onRelease, Modifier.offset(x = spacing), externalIsPressed = activePressedButtons.contains(config.faceRight.mappingId))
-        GamepadFaceButton(config.faceBottom, isXboxStyle, onPress, onRelease, Modifier.offset(y = spacing), externalIsPressed = activePressedButtons.contains(config.faceBottom.mappingId))
-        GamepadFaceButton(config.faceLeft, isXboxStyle, onPress, onRelease, Modifier.offset(x = -spacing), externalIsPressed = activePressedButtons.contains(config.faceLeft.mappingId))
+        GamepadFaceButton(config.faceTop, isXboxStyle, Modifier.offset(y = -spacing), externalIsPressed = activePressedButtons.contains(config.faceTop.mappingId))
+        GamepadFaceButton(config.faceRight, isXboxStyle, Modifier.offset(x = spacing), externalIsPressed = activePressedButtons.contains(config.faceRight.mappingId))
+        GamepadFaceButton(config.faceBottom, isXboxStyle, Modifier.offset(y = spacing), externalIsPressed = activePressedButtons.contains(config.faceBottom.mappingId))
+        GamepadFaceButton(config.faceLeft, isXboxStyle, Modifier.offset(x = -spacing), externalIsPressed = activePressedButtons.contains(config.faceLeft.mappingId))
     }
 }
 
@@ -2575,6 +2579,22 @@ private fun GamepadDpad(
             }
         }
     }
+}
+
+/**
+ * Converts the D-pad's internal UP(1)/DOWN(2)/LEFT(4)/RIGHT(8) touch-zone mask (which supports
+ * diagonals as two combined bits) into a single HID hat-switch value, per [determineDpadBit].
+ */
+private fun dpadMaskToHat(mask: Int): Int = when (mask) {
+    1 -> BluetoothKeyboardManager.HAT_NORTH
+    9 -> BluetoothKeyboardManager.HAT_NORTHEAST
+    8 -> BluetoothKeyboardManager.HAT_EAST
+    10 -> BluetoothKeyboardManager.HAT_SOUTHEAST
+    2 -> BluetoothKeyboardManager.HAT_SOUTH
+    6 -> BluetoothKeyboardManager.HAT_SOUTHWEST
+    4 -> BluetoothKeyboardManager.HAT_WEST
+    5 -> BluetoothKeyboardManager.HAT_NORTHWEST
+    else -> BluetoothKeyboardManager.HAT_NEUTRAL
 }
 
 private fun determineDpadBit(x: Float, y: Float, totalSize: Float): Int {
