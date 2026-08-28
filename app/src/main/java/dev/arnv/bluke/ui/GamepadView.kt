@@ -2,7 +2,10 @@ package dev.arnv.bluke.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import android.os.VibrationEffect
@@ -42,8 +45,13 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.edit
+import dev.arnv.bluke.ControllerMapperActivity
 import dev.arnv.bluke.R
 import dev.arnv.bluke.bluetooth.BluetoothKeyboardManager
+import dev.arnv.bluke.mapping.ControlSlot
+import dev.arnv.bluke.mapping.ControllerPresets
+import dev.arnv.bluke.mapping.ControllerProfile
+import dev.arnv.bluke.mapping.ControllerProfileStore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -118,6 +126,29 @@ private val CONSOLES = listOf(
     )
 )
 
+/** Overlays a mapped profile's own labels onto a native skin's button geometry - positions and
+ *  shapes are reused as-is; only what's printed on each cap (and which ones are shown) changes. */
+private fun ButtonDef.relabeledFor(profile: ControllerProfile): ButtonDef =
+    profile.labels[mappingId]?.let { copy(label = it) } ?: this
+
+private fun ConsoleConfig.relabeledFor(profile: ControllerProfile?): ConsoleConfig {
+    if (profile == null) return this
+    return copy(
+        faceTop = faceTop.relabeledFor(profile),
+        faceRight = faceRight.relabeledFor(profile),
+        faceBottom = faceBottom.relabeledFor(profile),
+        faceLeft = faceLeft.relabeledFor(profile),
+        leftBumper = leftBumper.relabeledFor(profile),
+        rightBumper = rightBumper.relabeledFor(profile),
+        leftTrigger = leftTrigger.relabeledFor(profile),
+        rightTrigger = rightTrigger.relabeledFor(profile),
+        selectButton = selectButton.relabeledFor(profile),
+        startButton = startButton.relabeledFor(profile),
+        guideButton = guideButton.relabeledFor(profile),
+        shareButton = shareButton.relabeledFor(profile)
+    )
+}
+
 // ── Main View ──
 
 @SuppressLint("MissingPermission")
@@ -134,7 +165,29 @@ fun GamepadView(
     val scope = rememberCoroutineScope()
 
     var selectedIndex by rememberSaveable { mutableIntStateOf(0) }
-    val config = CONSOLES[selectedIndex]
+
+    // Mapped-controller profile: null means "native Bluetooth HID gamepad" (unchanged default
+    // behavior). Non-null means every press/dpad move below sends a keyboard key instead of a
+    // gamepad report - see pressButton/releaseButton/handleDpadChange.
+    var activeProfileId by remember { mutableStateOf(ControllerProfileStore.getActiveProfileId(context)) }
+    val activeProfile = remember(activeProfileId) {
+        activeProfileId?.let { id -> ControllerPresets.byId(id) ?: ControllerProfileStore.loadProfile(context, id) }
+    }
+    var customProfiles by remember { mutableStateOf(ControllerProfileStore.listCustomProfiles(context)) }
+    var showProfileMenu by remember { mutableStateOf(false) }
+    val selectProfile = { id: String? ->
+        activeProfileId = id
+        ControllerProfileStore.setActiveProfileId(context, id)
+    }
+    val mapperLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        customProfiles = ControllerProfileStore.listCustomProfiles(context)
+        val stillValid = activeProfileId == null ||
+            ControllerPresets.byId(activeProfileId!!) != null ||
+            customProfiles.any { it.id == activeProfileId }
+        if (!stillValid) selectProfile(null)
+    }
+
+    val config = CONSOLES[selectedIndex].relabeledFor(activeProfile)
 
     var isEditMode by rememberSaveable { mutableStateOf(false) }
 
@@ -394,14 +447,54 @@ fun GamepadView(
         }
     }
 
+    // Sends (or releases) one control slot's bound keyboard key when a mapped profile is active.
+    // Unbound slots (a preset's buttons it doesn't use) and edit-mode drags are no-ops - the latter
+    // for the same reason native mode's transmitGamepadState skips sending while isEditMode.
+    val sendMappedKey = { slot: Int, isPress: Boolean ->
+        val binding = activeProfile?.bindingFor(slot)
+        if (binding != null && binding.isBound && !isEditMode) {
+            if (isPress) {
+                if (binding.modifier != 0) btManager.sendKey(binding.modifier, true)
+                btManager.sendKey(binding.keyCode, true)
+            } else {
+                btManager.sendKey(binding.keyCode, false)
+                if (binding.modifier != 0) btManager.sendKey(binding.modifier, false)
+            }
+        }
+    }
+
     val pressButton = { bitIndex: Int ->
-        buttonMask = buttonMask or (1 shl bitIndex)
-        transmitGamepadState(true)
+        if (activeProfile != null) {
+            sendMappedKey(bitIndex, true)
+        } else {
+            buttonMask = buttonMask or (1 shl bitIndex)
+            transmitGamepadState(true)
+        }
         triggerVibration(15)
     }
     val releaseButton = { bitIndex: Int ->
-        buttonMask = buttonMask and (1 shl bitIndex).inv()
-        transmitGamepadState(true)
+        if (activeProfile != null) {
+            sendMappedKey(bitIndex, false)
+        } else {
+            buttonMask = buttonMask and (1 shl bitIndex).inv()
+            transmitGamepadState(true)
+        }
+    }
+
+    var dpadMaskHeld by remember { mutableIntStateOf(0) }
+    val handleDpadChange = { mask: Int ->
+        if (activeProfile != null) {
+            val changed = dpadMaskHeld xor mask
+            if (changed and 1 != 0) sendMappedKey(ControlSlot.DPAD_UP, (mask and 1) != 0)
+            if (changed and 2 != 0) sendMappedKey(ControlSlot.DPAD_DOWN, (mask and 2) != 0)
+            if (changed and 4 != 0) sendMappedKey(ControlSlot.DPAD_LEFT, (mask and 4) != 0)
+            if (changed and 8 != 0) sendMappedKey(ControlSlot.DPAD_RIGHT, (mask and 8) != 0)
+            dpadMaskHeld = mask
+        } else {
+            dpadHat = dpadMaskToHat(mask)
+            transmitGamepadState(true)
+        }
+        if (mask != 0) triggerVibration(15)
     }
 
     Box(
@@ -538,6 +631,58 @@ fun GamepadView(
                         Text(config.name, color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                     }
 
+                    // Controller profile selector: native HID gamepad, a built-in emulator preset,
+                    // or one of the user's saved custom key-mapped profiles.
+                    Box {
+                        Row(
+                            modifier = Modifier
+                                .height(28.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color.White.copy(alpha = 0.15f))
+                                .clickable {
+                                    customProfiles = ControllerProfileStore.listCustomProfiles(context)
+                                    showProfileMenu = true
+                                }
+                                .padding(horizontal = 8.dp)
+                                .testTag("controller_profile_selector_pill"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Keyboard, "Controller profile", tint = Color.White, modifier = Modifier.size(11.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(activeProfile?.name ?: "Native", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        }
+                        DropdownMenu(expanded = showProfileMenu, onDismissRequest = { showProfileMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Native Gamepad") },
+                                onClick = { selectProfile(null); showProfileMenu = false }
+                            )
+                            HorizontalDivider()
+                            ControllerPresets.ALL.forEach { preset ->
+                                DropdownMenuItem(
+                                    text = { Text(preset.name) },
+                                    onClick = { selectProfile(preset.id); showProfileMenu = false }
+                                )
+                            }
+                            if (customProfiles.isNotEmpty()) {
+                                HorizontalDivider()
+                                customProfiles.forEach { custom ->
+                                    DropdownMenuItem(
+                                        text = { Text(custom.name) },
+                                        onClick = { selectProfile(custom.id); showProfileMenu = false }
+                                    )
+                                }
+                            }
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Manage Profiles…") },
+                                onClick = {
+                                    showProfileMenu = false
+                                    mapperLauncher.launch(Intent(context, ControllerMapperActivity::class.java))
+                                }
+                            )
+                        }
+                    }
+
                     // Vibration toggle
                     Box(
                         modifier = Modifier
@@ -592,14 +737,20 @@ fun GamepadView(
                             onOffsetChange = { x, y -> leftStickOffsetX = x; leftStickOffsetY = y; saveLayoutPref("${config.id}_left_stick_x", x); saveLayoutPref("${config.id}_left_stick_y", y) },
                             onScaleChange = { s -> leftStickScale = s; saveLayoutPref("${config.id}_left_stick_scale", s) }
                         ) {
-                            GamepadAnalogStick(
-                                label = "L",
-                                isClicked = (buttonMask and (1 shl 10)) != 0,
-                                isHeld = (buttonMask and (1 shl 10)) != 0,
-                                onMove = { x, y -> leftStickX = x; leftStickY = y; transmitGamepadState(false) },
-                                onStickClick = { scope.launch { pressButton(10); delay(100L.milliseconds); releaseButton(10) } },
-                                onToggleHold = { hold -> if (hold) pressButton(10) else releaseButton(10) }
-                            )
+                            // Mapped profiles here (SNES, arcade, etc.) don't use analog sticks -
+                            // hidden rather than left interactive-looking but functionally dead.
+                            if (activeProfile == null) {
+                                GamepadAnalogStick(
+                                    label = "L",
+                                    isClicked = (buttonMask and (1 shl 10)) != 0,
+                                    isHeld = (buttonMask and (1 shl 10)) != 0,
+                                    onMove = { x, y -> leftStickX = x; leftStickY = y; transmitGamepadState(false) },
+                                    onStickClick = { scope.launch { pressButton(10); delay(100L.milliseconds); releaseButton(10) } },
+                                    onToggleHold = { hold -> if (hold) pressButton(10) else releaseButton(10) }
+                                )
+                            } else {
+                                Spacer(Modifier.size(108.dp))
+                            }
                         }
                         Spacer(Modifier.height(16.dp))
                         EditableComponentWrapper(
@@ -612,11 +763,7 @@ fun GamepadView(
                         ) {
                             GamepadDpad(
                                 isXboxStyle = true,
-                                onDpadChange = { mask ->
-                                    dpadHat = dpadMaskToHat(mask)
-                                    transmitGamepadState(true)
-                                    if (mask != 0) triggerVibration(15)
-                                }
+                                onDpadChange = handleDpadChange
                             )
                         }
                     }
@@ -770,14 +917,18 @@ fun GamepadView(
                             onOffsetChange = { x, y -> rightStickOffsetX = x; rightStickOffsetY = y; saveLayoutPref("${config.id}_right_stick_x", x); saveLayoutPref("${config.id}_right_stick_y", y) },
                             onScaleChange = { s -> rightStickScale = s; saveLayoutPref("${config.id}_right_stick_scale", s) }
                         ) {
-                            GamepadAnalogStick(
-                                label = "R",
-                                isClicked = (buttonMask and (1 shl 11)) != 0,
-                                isHeld = (buttonMask and (1 shl 11)) != 0,
-                                onMove = { x, y -> rightStickX = x; rightStickY = y; transmitGamepadState(false) },
-                                onStickClick = { scope.launch { pressButton(11); delay(100L.milliseconds); releaseButton(11) } },
-                                onToggleHold = { hold -> if (hold) pressButton(11) else releaseButton(11) }
-                            )
+                            if (activeProfile == null) {
+                                GamepadAnalogStick(
+                                    label = "R",
+                                    isClicked = (buttonMask and (1 shl 11)) != 0,
+                                    isHeld = (buttonMask and (1 shl 11)) != 0,
+                                    onMove = { x, y -> rightStickX = x; rightStickY = y; transmitGamepadState(false) },
+                                    onStickClick = { scope.launch { pressButton(11); delay(100L.milliseconds); releaseButton(11) } },
+                                    onToggleHold = { hold -> if (hold) pressButton(11) else releaseButton(11) }
+                                )
+                            } else {
+                                Spacer(Modifier.size(108.dp))
+                            }
                         }
                         Spacer(Modifier.height(12.dp))
                     }
@@ -800,11 +951,7 @@ fun GamepadView(
                         ) {
                             GamepadDpad(
                                 isXboxStyle = false,
-                                onDpadChange = { mask ->
-                                    dpadHat = dpadMaskToHat(mask)
-                                    transmitGamepadState(true)
-                                    if (mask != 0) triggerVibration(15)
-                                }
+                                onDpadChange = handleDpadChange
                             )
                         }
                         Spacer(Modifier.height(16.dp))
@@ -816,14 +963,20 @@ fun GamepadView(
                             onOffsetChange = { x, y -> leftStickOffsetX = x; leftStickOffsetY = y; saveLayoutPref("${config.id}_left_stick_x", x); saveLayoutPref("${config.id}_left_stick_y", y) },
                             onScaleChange = { s -> leftStickScale = s; saveLayoutPref("${config.id}_left_stick_scale", s) }
                         ) {
-                            GamepadAnalogStick(
-                                label = "L",
-                                isClicked = (buttonMask and (1 shl 10)) != 0,
-                                isHeld = (buttonMask and (1 shl 10)) != 0,
-                                onMove = { x, y -> leftStickX = x; leftStickY = y; transmitGamepadState(false) },
-                                onStickClick = { scope.launch { pressButton(10); delay(100L.milliseconds); releaseButton(10) } },
-                                onToggleHold = { hold -> if (hold) pressButton(10) else releaseButton(10) }
-                            )
+                            // Mapped profiles here (SNES, arcade, etc.) don't use analog sticks -
+                            // hidden rather than left interactive-looking but functionally dead.
+                            if (activeProfile == null) {
+                                GamepadAnalogStick(
+                                    label = "L",
+                                    isClicked = (buttonMask and (1 shl 10)) != 0,
+                                    isHeld = (buttonMask and (1 shl 10)) != 0,
+                                    onMove = { x, y -> leftStickX = x; leftStickY = y; transmitGamepadState(false) },
+                                    onStickClick = { scope.launch { pressButton(10); delay(100L.milliseconds); releaseButton(10) } },
+                                    onToggleHold = { hold -> if (hold) pressButton(10) else releaseButton(10) }
+                                )
+                            } else {
+                                Spacer(Modifier.size(108.dp))
+                            }
                         }
                     }
 
@@ -962,7 +1115,9 @@ fun GamepadView(
                         ) {
                             FaceButtonsDiamond(
                                 config = config,
-                                isXboxStyle = false,
+                                // PS5's glyph rendering only knows the 4 PS symbols; any mapped
+                                // profile's own text labels need the plain-text (Xbox-style) path.
+                                isXboxStyle = activeProfile != null,
                                 onPress = pressButton,
                                 onRelease = releaseButton
                             )
@@ -976,14 +1131,18 @@ fun GamepadView(
                             onOffsetChange = { x, y -> rightStickOffsetX = x; rightStickOffsetY = y; saveLayoutPref("${config.id}_right_stick_x", x); saveLayoutPref("${config.id}_right_stick_y", y) },
                             onScaleChange = { s -> rightStickScale = s; saveLayoutPref("${config.id}_right_stick_scale", s) }
                         ) {
-                            GamepadAnalogStick(
-                                label = "R",
-                                isClicked = (buttonMask and (1 shl 11)) != 0,
-                                isHeld = (buttonMask and (1 shl 11)) != 0,
-                                onMove = { x, y -> rightStickX = x; rightStickY = y; transmitGamepadState(false) },
-                                onStickClick = { scope.launch { pressButton(11); delay(100L.milliseconds); releaseButton(11) } },
-                                onToggleHold = { hold -> if (hold) pressButton(11) else releaseButton(11) }
-                            )
+                            if (activeProfile == null) {
+                                GamepadAnalogStick(
+                                    label = "R",
+                                    isClicked = (buttonMask and (1 shl 11)) != 0,
+                                    isHeld = (buttonMask and (1 shl 11)) != 0,
+                                    onMove = { x, y -> rightStickX = x; rightStickY = y; transmitGamepadState(false) },
+                                    onStickClick = { scope.launch { pressButton(11); delay(100L.milliseconds); releaseButton(11) } },
+                                    onToggleHold = { hold -> if (hold) pressButton(11) else releaseButton(11) }
+                                )
+                            } else {
+                                Spacer(Modifier.size(108.dp))
+                            }
                         }
                     }
                 }
