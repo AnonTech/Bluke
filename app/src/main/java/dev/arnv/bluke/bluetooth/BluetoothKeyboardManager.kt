@@ -1013,11 +1013,27 @@ class BluetoothKeyboardManager(private val context: Context) {
                         }
                     }
                     if (!placed) {
+                        var emptySlot = -1
                         for (j in 0 until 6) {
                             if (activeKeys[j] == 0.toByte()) {
-                                activeKeys[j] = keyCode.toByte()
+                                emptySlot = j
                                 break
                             }
+                        }
+                        if (emptySlot != -1) {
+                            activeKeys[emptySlot] = keyCode.toByte()
+                        } else {
+                            // All 6 boot-protocol rollover slots are already held - a 7th
+                            // simultaneous standard key can't be represented in this report.
+                            // Evict the oldest (index 0) instead of silently dropping the new
+                            // press, which otherwise reads as a button that just doesn't work:
+                            // button-dense mapped profiles (e.g. Arcade/FBNeo/GGPO FBA can bind
+                            // 5 standard keys plus a diagonal D-pad direction at once) hit this
+                            // limit in normal play.
+                            for (j in 0 until 5) {
+                                activeKeys[j] = activeKeys[j + 1]
+                            }
+                            activeKeys[5] = keyCode.toByte()
                         }
                     }
                 } else {

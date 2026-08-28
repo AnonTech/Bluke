@@ -173,6 +173,15 @@ fun GamepadView(
     val activeProfile = remember(activeProfileId) {
         activeProfileId?.let { id -> ControllerPresets.byId(id) ?: ControllerProfileStore.loadProfile(context, id) }
     }
+    // The touch-handling coroutine inside each button/stick/dpad widget is launched once (its
+    // pointerInput key never changes across a profile switch) and keeps running with whatever
+    // lambda it captured at launch - it never sees a newer `pressButton`/`sendMappedKey` object.
+    // Reading activeProfile through this instead of the raw val lets those already-captured,
+    // never-refreshed lambdas still resolve to the *current* profile when they run, since this
+    // ref's identity is stable and only its value changes. Without it, switching profiles without
+    // also switching skin (which is the only thing that recreates these widgets) keeps sending
+    // whatever profile was active when the current skin first mounted.
+    val currentActiveProfile = rememberUpdatedState(activeProfile)
     var customProfiles by remember { mutableStateOf(ControllerProfileStore.listCustomProfiles(context)) }
     var showProfileMenu by remember { mutableStateOf(false) }
     val selectProfile = { id: String? ->
@@ -407,7 +416,7 @@ fun GamepadView(
     var rightStickY by remember { mutableFloatStateOf(0f) }
 
     val transmitGamepadState = { force: Boolean ->
-        if (isEditMode || activeProfile != null) {
+        if (isEditMode || currentActiveProfile.value != null) {
             // Edit mode's drag-to-reposition overlay sits on top of every control's own touch
             // handler and can't stop it from also firing (Compose doesn't let a consumed touch
             // be hidden from a sibling that opted into unconsumed-or-not delivery, which every
@@ -463,7 +472,7 @@ fun GamepadView(
     // Unbound slots (a preset's buttons it doesn't use) and edit-mode drags are no-ops - the latter
     // for the same reason native mode's transmitGamepadState skips sending while isEditMode.
     val sendMappedKey = { slot: Int, isPress: Boolean ->
-        val binding = activeProfile?.bindingFor(slot)
+        val binding = currentActiveProfile.value?.bindingFor(slot)
         if (binding != null && binding.isBound && !isEditMode) {
             if (isPress) {
                 if (binding.modifier != 0) btManager.sendKey(binding.modifier, true)
@@ -478,7 +487,7 @@ fun GamepadView(
     }
 
     val pressButton = { bitIndex: Int ->
-        if (activeProfile != null) {
+        if (currentActiveProfile.value != null) {
             sendMappedKey(bitIndex, true)
         } else {
             buttonMask = buttonMask or (1 shl bitIndex)
@@ -487,7 +496,7 @@ fun GamepadView(
         triggerVibration(15)
     }
     val releaseButton = { bitIndex: Int ->
-        if (activeProfile != null) {
+        if (currentActiveProfile.value != null) {
             sendMappedKey(bitIndex, false)
         } else {
             buttonMask = buttonMask and (1 shl bitIndex).inv()
@@ -515,7 +524,7 @@ fun GamepadView(
     }
 
     val handleDpadChange = { mask: Int ->
-        if (activeProfile != null) {
+        if (currentActiveProfile.value != null) {
             dpadPhysicalMask = mask
             updateMappedDpad()
         } else {
@@ -539,7 +548,7 @@ fun GamepadView(
     val handleLeftStickMove = { x: Float, y: Float ->
         leftStickX = x
         leftStickY = y
-        if (activeProfile != null) {
+        if (currentActiveProfile.value != null) {
             val newMask = stickAxisToDpadMask(x, y)
             if (newMask != leftStickDpadMask) {
                 leftStickDpadMask = newMask
@@ -552,7 +561,7 @@ fun GamepadView(
     val handleRightStickMove = { x: Float, y: Float ->
         rightStickX = x
         rightStickY = y
-        if (activeProfile != null) {
+        if (currentActiveProfile.value != null) {
             val newMask = stickAxisToDpadMask(x, y)
             if (newMask != rightStickDpadMask) {
                 rightStickDpadMask = newMask
@@ -1640,7 +1649,13 @@ private fun FaceButtonsDiamond(
     /** Null shows all 4 (native mode); otherwise only face buttons a mapped profile actually binds. */
     visibleSlots: Set<Int>? = null
 ) {
-    val isVisible = { mappingId: Int -> visibleSlots == null || visibleSlots.contains(mappingId) }
+    // The proximity-touch loop below is launched once in a pointerInput(Unit) block that never
+    // restarts, so it keeps calling whatever isVisible/updateProximityPresses it captured at
+    // launch - it never sees a newer visibleSlots after a profile switch (skin switches are fine,
+    // since those recreate this whole composable). Route through rememberUpdatedState so the
+    // already-captured closure still reads the *current* profile's visible set when it runs.
+    val currentVisibleSlots = rememberUpdatedState(visibleSlots)
+    val isVisible = { mappingId: Int -> currentVisibleSlots.value == null || currentVisibleSlots.value!!.contains(mappingId) }
     val spacing = 40.dp
     val density = LocalDensity.current.density
 
