@@ -488,20 +488,72 @@ fun GamepadView(
         }
     }
 
+    // Three independent sources can each want a D-pad direction while mapped: the physical D-pad
+    // and both analog sticks (pushed instead of used as an analog axis, since none of the presets
+    // bind a continuous axis). They're combined so, say, releasing the stick doesn't cut a
+    // direction the physical D-pad is still holding.
     var dpadMaskHeld by remember { mutableIntStateOf(0) }
+    var dpadPhysicalMask by remember { mutableIntStateOf(0) }
+    var leftStickDpadMask by remember { mutableIntStateOf(0) }
+    var rightStickDpadMask by remember { mutableIntStateOf(0) }
+
+    val updateMappedDpad = {
+        val combined = dpadPhysicalMask or leftStickDpadMask or rightStickDpadMask
+        val changed = dpadMaskHeld xor combined
+        if (changed and 1 != 0) sendMappedKey(ControlSlot.DPAD_UP, (combined and 1) != 0)
+        if (changed and 2 != 0) sendMappedKey(ControlSlot.DPAD_DOWN, (combined and 2) != 0)
+        if (changed and 4 != 0) sendMappedKey(ControlSlot.DPAD_LEFT, (combined and 4) != 0)
+        if (changed and 8 != 0) sendMappedKey(ControlSlot.DPAD_RIGHT, (combined and 8) != 0)
+        dpadMaskHeld = combined
+    }
+
     val handleDpadChange = { mask: Int ->
         if (activeProfile != null) {
-            val changed = dpadMaskHeld xor mask
-            if (changed and 1 != 0) sendMappedKey(ControlSlot.DPAD_UP, (mask and 1) != 0)
-            if (changed and 2 != 0) sendMappedKey(ControlSlot.DPAD_DOWN, (mask and 2) != 0)
-            if (changed and 4 != 0) sendMappedKey(ControlSlot.DPAD_LEFT, (mask and 4) != 0)
-            if (changed and 8 != 0) sendMappedKey(ControlSlot.DPAD_RIGHT, (mask and 8) != 0)
-            dpadMaskHeld = mask
+            dpadPhysicalMask = mask
+            updateMappedDpad()
         } else {
             dpadHat = dpadMaskToHat(mask)
             transmitGamepadState(true)
         }
         if (mask != 0) triggerVibration(15)
+    }
+
+    // Normalized stick axes (-1..1) pushed past a deadzone read as the same D-pad direction(s) a
+    // physical D-pad press would - up to two at once, so pushing diagonally still works.
+    val stickAxisToDpadMask = { x: Float, y: Float ->
+        val deadzone = 0.5f
+        var mask = 0
+        if (y < -deadzone) mask = mask or 1
+        if (y > deadzone) mask = mask or 2
+        if (x < -deadzone) mask = mask or 4
+        if (x > deadzone) mask = mask or 8
+        mask
+    }
+    val handleLeftStickMove = { x: Float, y: Float ->
+        leftStickX = x
+        leftStickY = y
+        if (activeProfile != null) {
+            val newMask = stickAxisToDpadMask(x, y)
+            if (newMask != leftStickDpadMask) {
+                leftStickDpadMask = newMask
+                updateMappedDpad()
+            }
+        } else {
+            transmitGamepadState(false)
+        }
+    }
+    val handleRightStickMove = { x: Float, y: Float ->
+        rightStickX = x
+        rightStickY = y
+        if (activeProfile != null) {
+            val newMask = stickAxisToDpadMask(x, y)
+            if (newMask != rightStickDpadMask) {
+                rightStickDpadMask = newMask
+                updateMappedDpad()
+            }
+        } else {
+            transmitGamepadState(false)
+        }
     }
 
     Box(
@@ -751,7 +803,7 @@ fun GamepadView(
                                 label = "L",
                                 isClicked = (buttonMask and (1 shl 10)) != 0,
                                 isHeld = (buttonMask and (1 shl 10)) != 0,
-                                onMove = { x, y -> leftStickX = x; leftStickY = y; transmitGamepadState(false) },
+                                onMove = handleLeftStickMove,
                                 onStickClick = { scope.launch { pressButton(10); delay(100L.milliseconds); releaseButton(10) } },
                                 onToggleHold = { hold -> if (hold) pressButton(10) else releaseButton(10) }
                             )
@@ -934,7 +986,7 @@ fun GamepadView(
                                 label = "R",
                                 isClicked = (buttonMask and (1 shl 11)) != 0,
                                 isHeld = (buttonMask and (1 shl 11)) != 0,
-                                onMove = { x, y -> rightStickX = x; rightStickY = y; transmitGamepadState(false) },
+                                onMove = handleRightStickMove,
                                 onStickClick = { scope.launch { pressButton(11); delay(100L.milliseconds); releaseButton(11) } },
                                 onToggleHold = { hold -> if (hold) pressButton(11) else releaseButton(11) }
                             )
@@ -979,7 +1031,7 @@ fun GamepadView(
                                 label = "L",
                                 isClicked = (buttonMask and (1 shl 10)) != 0,
                                 isHeld = (buttonMask and (1 shl 10)) != 0,
-                                onMove = { x, y -> leftStickX = x; leftStickY = y; transmitGamepadState(false) },
+                                onMove = handleLeftStickMove,
                                 onStickClick = { scope.launch { pressButton(10); delay(100L.milliseconds); releaseButton(10) } },
                                 onToggleHold = { hold -> if (hold) pressButton(10) else releaseButton(10) }
                             )
@@ -1150,7 +1202,7 @@ fun GamepadView(
                                 label = "R",
                                 isClicked = (buttonMask and (1 shl 11)) != 0,
                                 isHeld = (buttonMask and (1 shl 11)) != 0,
-                                onMove = { x, y -> rightStickX = x; rightStickY = y; transmitGamepadState(false) },
+                                onMove = handleRightStickMove,
                                 onStickClick = { scope.launch { pressButton(11); delay(100L.milliseconds); releaseButton(11) } },
                                 onToggleHold = { hold -> if (hold) pressButton(11) else releaseButton(11) }
                             )
