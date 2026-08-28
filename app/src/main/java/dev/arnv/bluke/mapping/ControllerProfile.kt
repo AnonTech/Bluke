@@ -72,10 +72,12 @@ private fun key(code: Int, modifier: Int = 0) = KeyBinding(code, modifier)
 object ControllerPresets {
     private val K = KeyboardLayouts
 
-    // Verified against snes9x/controls.h's own documented default joypad-1 mapping.
+    // Verified against snes9x/controls.h's own documented default joypad-1 mapping. Snes9x and
+    // "generic SNES" used to be two separate presets, but the generic one was meant to share this
+    // same binding family and never actually diverged in practice - merged into one entry.
     val SNES9X = ControllerProfile(
         id = "preset_snes9x",
-        name = "Snes9x",
+        name = "Snes9x / SNES",
         isBuiltIn = true,
         activeSlots = setOf(
             ControlSlot.FACE_BOTTOM, ControlSlot.FACE_RIGHT, ControlSlot.FACE_LEFT, ControlSlot.FACE_TOP,
@@ -97,30 +99,6 @@ object ControllerPresets {
             ControlSlot.RIGHT_BUMPER to key(K.KEY_S),
             ControlSlot.SELECT to key(K.KEY_ENTER),
             ControlSlot.START to key(K.KEY_SPACE),
-            ControlSlot.DPAD_UP to key(K.KEY_UP),
-            ControlSlot.DPAD_DOWN to key(K.KEY_DOWN),
-            ControlSlot.DPAD_LEFT to key(K.KEY_LEFT),
-            ControlSlot.DPAD_RIGHT to key(K.KEY_RIGHT)
-        )
-    )
-
-    // A commonly-seen alternate SNES keyboard scheme (WASD-adjacent), distinct from Snes9x's own
-    // default above so both are available as separate starting points.
-    val SNES_GENERIC = ControllerProfile(
-        id = "preset_snes",
-        name = "SNES",
-        isBuiltIn = true,
-        activeSlots = SNES9X.activeSlots,
-        labels = SNES9X.labels,
-        bindings = mapOf(
-            ControlSlot.FACE_TOP to key(K.KEY_S),
-            ControlSlot.FACE_RIGHT to key(K.KEY_X),
-            ControlSlot.FACE_BOTTOM to key(K.KEY_Z),
-            ControlSlot.FACE_LEFT to key(K.KEY_A),
-            ControlSlot.LEFT_BUMPER to key(K.KEY_Q),
-            ControlSlot.RIGHT_BUMPER to key(K.KEY_W),
-            ControlSlot.SELECT to key(K.MOD_RSHIFT),
-            ControlSlot.START to key(K.KEY_ENTER),
             ControlSlot.DPAD_UP to key(K.KEY_UP),
             ControlSlot.DPAD_DOWN to key(K.KEY_DOWN),
             ControlSlot.DPAD_LEFT to key(K.KEY_LEFT),
@@ -246,7 +224,7 @@ object ControllerPresets {
         )
     )
 
-    val ALL: List<ControllerProfile> = listOf(SNES9X, SNES_GENERIC, NES, GENESIS, ARCADE, FBNEO, GGPO_FBA, FLYCAST)
+    val ALL: List<ControllerProfile> = listOf(SNES9X, NES, GENESIS, ARCADE, FBNEO, GGPO_FBA, FLYCAST)
 
     fun byId(id: String): ControllerProfile? = ALL.firstOrNull { it.id == id }
 }
