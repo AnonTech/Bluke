@@ -348,13 +348,23 @@ class BluetoothKeyboardManager(private val context: Context) {
         0xc0.toByte()                         // END_COLLECTION (Application)
     )
 
+    // Bluetooth's Class-of-Device minor-device-class byte packs two independent fields for the
+    // Peripheral major class: bits 7-6 are the keyboard/pointing flags (SUBCLASS1_*) and bits 5-2
+    // are a separate device-category (SUBCLASS2_*, e.g. joystick/gamepad/remote). They're meant to
+    // be OR'd together - SUBCLASS1_COMBO alone told hosts (macOS included) this is a combo
+    // keyboard+mouse with an "uncategorized" second field, never mentioning a gamepad, which is
+    // one reason a host's Bluetooth stack may not treat the connected accessory as a controller at
+    // all even though report ID 3 in the descriptor below is a fully valid HID gamepad.
+    private val hidSubclass: Byte =
+        (BluetoothHidDevice.SUBCLASS1_COMBO.toInt() or BluetoothHidDevice.SUBCLASS2_GAMEPAD.toInt()).toByte()
+
     private val sdpSettings: BluetoothHidDeviceAppSdpSettings? by lazy {
         try {
             BluetoothHidDeviceAppSdpSettings(
                 "Bluke",                         // Name
                 "Wireless Controller Combo",    // Description
                 "Bluke",                         // Provider
-                BluetoothHidDevice.SUBCLASS1_COMBO, // Subclass
+                hidSubclass,                      // Subclass: combo keyboard+pointing AND gamepad
                 hidDescriptor                    // Descriptor
             )
         } catch (e: Throwable) {
