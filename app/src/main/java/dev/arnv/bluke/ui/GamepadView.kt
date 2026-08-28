@@ -186,6 +186,10 @@ fun GamepadView(
             customProfiles.any { it.id == activeProfileId }
         if (!stillValid) selectProfile(null)
     }
+    // Buttons a mapped profile doesn't bind are hidden rather than left showing their native
+    // Xbox/PS5 label doing nothing - otherwise most of the skin still looks and sits like the
+    // native gamepad. D-pad and sticks are always shown regardless (see their own render sites).
+    val isSlotVisible = { mappingId: Int -> activeProfile == null || activeProfile.activeSlots.contains(mappingId) }
 
     val config = CONSOLES[selectedIndex].relabeledFor(activeProfile)
 
@@ -403,12 +407,15 @@ fun GamepadView(
     var rightStickY by remember { mutableFloatStateOf(0f) }
 
     val transmitGamepadState = { force: Boolean ->
-        if (isEditMode) {
+        if (isEditMode || activeProfile != null) {
             // Edit mode's drag-to-reposition overlay sits on top of every control's own touch
             // handler and can't stop it from also firing (Compose doesn't let a consumed touch
             // be hidden from a sibling that opted into unconsumed-or-not delivery, which every
             // control here does for multi-touch reasons). Block sends at the source instead so
             // repositioning a button never reaches the connected host as a live keypress.
+            // A mapped profile is blocked the same way: the sticks stay visible and draggable
+            // (see their render sites) but have no keyboard binding, so their movement must
+            // never fall through to a native HID gamepad report while a profile is active.
             isGamepadDirty = false
         } else {
             val now = System.currentTimeMillis()
@@ -737,20 +744,17 @@ fun GamepadView(
                             onOffsetChange = { x, y -> leftStickOffsetX = x; leftStickOffsetY = y; saveLayoutPref("${config.id}_left_stick_x", x); saveLayoutPref("${config.id}_left_stick_y", y) },
                             onScaleChange = { s -> leftStickScale = s; saveLayoutPref("${config.id}_left_stick_scale", s) }
                         ) {
-                            // Mapped profiles here (SNES, arcade, etc.) don't use analog sticks -
-                            // hidden rather than left interactive-looking but functionally dead.
-                            if (activeProfile == null) {
-                                GamepadAnalogStick(
-                                    label = "L",
-                                    isClicked = (buttonMask and (1 shl 10)) != 0,
-                                    isHeld = (buttonMask and (1 shl 10)) != 0,
-                                    onMove = { x, y -> leftStickX = x; leftStickY = y; transmitGamepadState(false) },
-                                    onStickClick = { scope.launch { pressButton(10); delay(100L.milliseconds); releaseButton(10) } },
-                                    onToggleHold = { hold -> if (hold) pressButton(10) else releaseButton(10) }
-                                )
-                            } else {
-                                Spacer(Modifier.size(108.dp))
-                            }
+                            // Always shown, including in mapped mode: transmitGamepadState() is
+                            // itself blocked while a profile is active, so movement here is just
+                            // visual (no keyboard binding exists for a continuous analog axis).
+                            GamepadAnalogStick(
+                                label = "L",
+                                isClicked = (buttonMask and (1 shl 10)) != 0,
+                                isHeld = (buttonMask and (1 shl 10)) != 0,
+                                onMove = { x, y -> leftStickX = x; leftStickY = y; transmitGamepadState(false) },
+                                onStickClick = { scope.launch { pressButton(10); delay(100L.milliseconds); releaseButton(10) } },
+                                onToggleHold = { hold -> if (hold) pressButton(10) else releaseButton(10) }
+                            )
                         }
                         Spacer(Modifier.height(16.dp))
                         EditableComponentWrapper(
@@ -788,7 +792,8 @@ fun GamepadView(
                                     offsetY = leftTriggerOffsetY,
                                     scale = leftTriggerScale,
                                     onOffsetChange = { x, y -> leftTriggerOffsetX = x; leftTriggerOffsetY = y; saveLayoutPref("${config.id}_left_trigger_x", x); saveLayoutPref("${config.id}_left_trigger_y", y) },
-                                    onScaleChange = { s -> leftTriggerScale = s; saveLayoutPref("${config.id}_left_trigger_scale", s) }
+                                    onScaleChange = { s -> leftTriggerScale = s; saveLayoutPref("${config.id}_left_trigger_scale", s) },
+                                    visible = isSlotVisible(config.leftTrigger.mappingId)
                                 ) {
                                     GamepadTriggerButton(config.leftTrigger, true, pressButton, releaseButton)
                                 }
@@ -799,7 +804,8 @@ fun GamepadView(
                                     offsetY = leftBumperOffsetY,
                                     scale = leftBumperScale,
                                     onOffsetChange = { x, y -> leftBumperOffsetX = x; leftBumperOffsetY = y; saveLayoutPref("${config.id}_left_bumper_x", x); saveLayoutPref("${config.id}_left_bumper_y", y) },
-                                    onScaleChange = { s -> leftBumperScale = s; saveLayoutPref("${config.id}_left_bumper_scale", s) }
+                                    onScaleChange = { s -> leftBumperScale = s; saveLayoutPref("${config.id}_left_bumper_scale", s) },
+                                    visible = isSlotVisible(config.leftBumper.mappingId)
                                 ) {
                                     GamepadBumperButton(config.leftBumper, true, pressButton, releaseButton)
                                 }
@@ -812,7 +818,8 @@ fun GamepadView(
                                     offsetY = rightTriggerOffsetY,
                                     scale = rightTriggerScale,
                                     onOffsetChange = { x, y -> rightTriggerOffsetX = x; rightTriggerOffsetY = y; saveLayoutPref("${config.id}_right_trigger_x", x); saveLayoutPref("${config.id}_right_trigger_y", y) },
-                                    onScaleChange = { s -> rightTriggerScale = s; saveLayoutPref("${config.id}_right_trigger_scale", s) }
+                                    onScaleChange = { s -> rightTriggerScale = s; saveLayoutPref("${config.id}_right_trigger_scale", s) },
+                                    visible = isSlotVisible(config.rightTrigger.mappingId)
                                 ) {
                                     GamepadTriggerButton(config.rightTrigger, false, pressButton, releaseButton)
                                 }
@@ -823,7 +830,8 @@ fun GamepadView(
                                     offsetY = rightBumperOffsetY,
                                     scale = rightBumperScale,
                                     onOffsetChange = { x, y -> rightBumperOffsetX = x; rightBumperOffsetY = y; saveLayoutPref("${config.id}_right_bumper_x", x); saveLayoutPref("${config.id}_right_bumper_y", y) },
-                                    onScaleChange = { s -> rightBumperScale = s; saveLayoutPref("${config.id}_right_bumper_scale", s) }
+                                    onScaleChange = { s -> rightBumperScale = s; saveLayoutPref("${config.id}_right_bumper_scale", s) },
+                                    visible = isSlotVisible(config.rightBumper.mappingId)
                                 ) {
                                     GamepadBumperButton(config.rightBumper, false, pressButton, releaseButton)
                                 }
@@ -839,7 +847,8 @@ fun GamepadView(
                             offsetY = guideOffsetY,
                             scale = guideScale,
                             onOffsetChange = { x, y -> guideOffsetX = x; guideOffsetY = y; saveLayoutPref("${config.id}_guide_x", x); saveLayoutPref("${config.id}_guide_y", y) },
-                            onScaleChange = { s -> guideScale = s; saveLayoutPref("${config.id}_guide_scale", s) }
+                            onScaleChange = { s -> guideScale = s; saveLayoutPref("${config.id}_guide_scale", s) },
+                            visible = isSlotVisible(config.guideButton.mappingId)
                         ) {
                             XboxLogoGuideButton(config.guideButton, pressButton, releaseButton)
                         }
@@ -858,7 +867,8 @@ fun GamepadView(
                                 offsetY = selectOffsetY,
                                 scale = selectScale,
                                 onOffsetChange = { x, y -> selectOffsetX = x; selectOffsetY = y; saveLayoutPref("${config.id}_select_x", x); saveLayoutPref("${config.id}_select_y", y) },
-                                onScaleChange = { s -> selectScale = s; saveLayoutPref("${config.id}_select_scale", s) }
+                                onScaleChange = { s -> selectScale = s; saveLayoutPref("${config.id}_select_scale", s) },
+                                visible = isSlotVisible(config.selectButton.mappingId)
                             ) {
                                 GamepadCenterButton(config.selectButton, pressButton, releaseButton)
                             }
@@ -868,7 +878,8 @@ fun GamepadView(
                                 offsetY = shareOffsetY,
                                 scale = shareScale,
                                 onOffsetChange = { x, y -> shareOffsetX = x; shareOffsetY = y; saveLayoutPref("${config.id}_share_x", x); saveLayoutPref("${config.id}_share_y", y) },
-                                onScaleChange = { s -> shareScale = s; saveLayoutPref("${config.id}_share_scale", s) }
+                                onScaleChange = { s -> shareScale = s; saveLayoutPref("${config.id}_share_scale", s) },
+                                visible = isSlotVisible(config.shareButton.mappingId)
                             ) {
                                 GamepadCenterButton(config.shareButton, pressButton, releaseButton)
                             }
@@ -878,7 +889,8 @@ fun GamepadView(
                                 offsetY = startOffsetY,
                                 scale = startScale,
                                 onOffsetChange = { x, y -> startOffsetX = x; startOffsetY = y; saveLayoutPref("${config.id}_start_x", x); saveLayoutPref("${config.id}_start_y", y) },
-                                onScaleChange = { s -> startScale = s; saveLayoutPref("${config.id}_start_scale", s) }
+                                onScaleChange = { s -> startScale = s; saveLayoutPref("${config.id}_start_scale", s) },
+                                visible = isSlotVisible(config.startButton.mappingId)
                             ) {
                                 GamepadCenterButton(config.startButton, pressButton, releaseButton)
                             }
@@ -905,7 +917,8 @@ fun GamepadView(
                                 config = config,
                                 isXboxStyle = true,
                                 onPress = pressButton,
-                                onRelease = releaseButton
+                                onRelease = releaseButton,
+                                visibleSlots = activeProfile?.activeSlots
                             )
                         }
                         Spacer(Modifier.height(6.dp))
@@ -917,18 +930,14 @@ fun GamepadView(
                             onOffsetChange = { x, y -> rightStickOffsetX = x; rightStickOffsetY = y; saveLayoutPref("${config.id}_right_stick_x", x); saveLayoutPref("${config.id}_right_stick_y", y) },
                             onScaleChange = { s -> rightStickScale = s; saveLayoutPref("${config.id}_right_stick_scale", s) }
                         ) {
-                            if (activeProfile == null) {
-                                GamepadAnalogStick(
-                                    label = "R",
-                                    isClicked = (buttonMask and (1 shl 11)) != 0,
-                                    isHeld = (buttonMask and (1 shl 11)) != 0,
-                                    onMove = { x, y -> rightStickX = x; rightStickY = y; transmitGamepadState(false) },
-                                    onStickClick = { scope.launch { pressButton(11); delay(100L.milliseconds); releaseButton(11) } },
-                                    onToggleHold = { hold -> if (hold) pressButton(11) else releaseButton(11) }
-                                )
-                            } else {
-                                Spacer(Modifier.size(108.dp))
-                            }
+                            GamepadAnalogStick(
+                                label = "R",
+                                isClicked = (buttonMask and (1 shl 11)) != 0,
+                                isHeld = (buttonMask and (1 shl 11)) != 0,
+                                onMove = { x, y -> rightStickX = x; rightStickY = y; transmitGamepadState(false) },
+                                onStickClick = { scope.launch { pressButton(11); delay(100L.milliseconds); releaseButton(11) } },
+                                onToggleHold = { hold -> if (hold) pressButton(11) else releaseButton(11) }
+                            )
                         }
                         Spacer(Modifier.height(12.dp))
                     }
@@ -963,20 +972,17 @@ fun GamepadView(
                             onOffsetChange = { x, y -> leftStickOffsetX = x; leftStickOffsetY = y; saveLayoutPref("${config.id}_left_stick_x", x); saveLayoutPref("${config.id}_left_stick_y", y) },
                             onScaleChange = { s -> leftStickScale = s; saveLayoutPref("${config.id}_left_stick_scale", s) }
                         ) {
-                            // Mapped profiles here (SNES, arcade, etc.) don't use analog sticks -
-                            // hidden rather than left interactive-looking but functionally dead.
-                            if (activeProfile == null) {
-                                GamepadAnalogStick(
-                                    label = "L",
-                                    isClicked = (buttonMask and (1 shl 10)) != 0,
-                                    isHeld = (buttonMask and (1 shl 10)) != 0,
-                                    onMove = { x, y -> leftStickX = x; leftStickY = y; transmitGamepadState(false) },
-                                    onStickClick = { scope.launch { pressButton(10); delay(100L.milliseconds); releaseButton(10) } },
-                                    onToggleHold = { hold -> if (hold) pressButton(10) else releaseButton(10) }
-                                )
-                            } else {
-                                Spacer(Modifier.size(108.dp))
-                            }
+                            // Always shown, including in mapped mode: transmitGamepadState() is
+                            // itself blocked while a profile is active, so movement here is just
+                            // visual (no keyboard binding exists for a continuous analog axis).
+                            GamepadAnalogStick(
+                                label = "L",
+                                isClicked = (buttonMask and (1 shl 10)) != 0,
+                                isHeld = (buttonMask and (1 shl 10)) != 0,
+                                onMove = { x, y -> leftStickX = x; leftStickY = y; transmitGamepadState(false) },
+                                onStickClick = { scope.launch { pressButton(10); delay(100L.milliseconds); releaseButton(10) } },
+                                onToggleHold = { hold -> if (hold) pressButton(10) else releaseButton(10) }
+                            )
                         }
                     }
 
@@ -1000,7 +1006,8 @@ fun GamepadView(
                                     offsetY = leftTriggerOffsetY,
                                     scale = leftTriggerScale,
                                     onOffsetChange = { x, y -> leftTriggerOffsetX = x; leftTriggerOffsetY = y; saveLayoutPref("${config.id}_left_trigger_x", x); saveLayoutPref("${config.id}_left_trigger_y", y) },
-                                    onScaleChange = { s -> leftTriggerScale = s; saveLayoutPref("${config.id}_left_trigger_scale", s) }
+                                    onScaleChange = { s -> leftTriggerScale = s; saveLayoutPref("${config.id}_left_trigger_scale", s) },
+                                    visible = isSlotVisible(config.leftTrigger.mappingId)
                                 ) {
                                     GamepadTriggerButton(config.leftTrigger, true, pressButton, releaseButton)
                                 }
@@ -1011,12 +1018,13 @@ fun GamepadView(
                                     offsetY = leftBumperOffsetY,
                                     scale = leftBumperScale,
                                     onOffsetChange = { x, y -> leftBumperOffsetX = x; leftBumperOffsetY = y; saveLayoutPref("${config.id}_left_bumper_x", x); saveLayoutPref("${config.id}_left_bumper_y", y) },
-                                    onScaleChange = { s -> leftBumperScale = s; saveLayoutPref("${config.id}_left_bumper_scale", s) }
+                                    onScaleChange = { s -> leftBumperScale = s; saveLayoutPref("${config.id}_left_bumper_scale", s) },
+                                    visible = isSlotVisible(config.leftBumper.mappingId)
                                 ) {
                                     GamepadBumperButton(config.leftBumper, true, pressButton, releaseButton)
                                 }
                             }
-                            
+
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 EditableComponentWrapper(
                                     isEditMode = isEditMode,
@@ -1024,7 +1032,8 @@ fun GamepadView(
                                     offsetY = rightTriggerOffsetY,
                                     scale = rightTriggerScale,
                                     onOffsetChange = { x, y -> rightTriggerOffsetX = x; rightTriggerOffsetY = y; saveLayoutPref("${config.id}_right_trigger_x", x); saveLayoutPref("${config.id}_right_trigger_y", y) },
-                                    onScaleChange = { s -> rightTriggerScale = s; saveLayoutPref("${config.id}_right_trigger_scale", s) }
+                                    onScaleChange = { s -> rightTriggerScale = s; saveLayoutPref("${config.id}_right_trigger_scale", s) },
+                                    visible = isSlotVisible(config.rightTrigger.mappingId)
                                 ) {
                                     GamepadTriggerButton(config.rightTrigger, false, pressButton, releaseButton)
                                 }
@@ -1035,7 +1044,8 @@ fun GamepadView(
                                     offsetY = rightBumperOffsetY,
                                     scale = rightBumperScale,
                                     onOffsetChange = { x, y -> rightBumperOffsetX = x; rightBumperOffsetY = y; saveLayoutPref("${config.id}_right_bumper_x", x); saveLayoutPref("${config.id}_right_bumper_y", y) },
-                                    onScaleChange = { s -> rightBumperScale = s; saveLayoutPref("${config.id}_right_bumper_scale", s) }
+                                    onScaleChange = { s -> rightBumperScale = s; saveLayoutPref("${config.id}_right_bumper_scale", s) },
+                                    visible = isSlotVisible(config.rightBumper.mappingId)
                                 ) {
                                     GamepadBumperButton(config.rightBumper, false, pressButton, releaseButton)
                                 }
@@ -1051,7 +1061,8 @@ fun GamepadView(
                             offsetY = guideOffsetY,
                             scale = guideScale,
                             onOffsetChange = { x, y -> guideOffsetX = x; guideOffsetY = y; saveLayoutPref("${config.id}_guide_x", x); saveLayoutPref("${config.id}_guide_y", y) },
-                            onScaleChange = { s -> guideScale = s; saveLayoutPref("${config.id}_guide_scale", s) }
+                            onScaleChange = { s -> guideScale = s; saveLayoutPref("${config.id}_guide_scale", s) },
+                            visible = isSlotVisible(config.guideButton.mappingId)
                         ) {
                             PlayStationLogoButton(config.guideButton, pressButton, releaseButton)
                         }
@@ -1070,7 +1081,8 @@ fun GamepadView(
                                 offsetY = selectOffsetY,
                                 scale = selectScale,
                                 onOffsetChange = { x, y -> selectOffsetX = x; selectOffsetY = y; saveLayoutPref("${config.id}_select_x", x); saveLayoutPref("${config.id}_select_y", y) },
-                                onScaleChange = { s -> selectScale = s; saveLayoutPref("${config.id}_select_scale", s) }
+                                onScaleChange = { s -> selectScale = s; saveLayoutPref("${config.id}_select_scale", s) },
+                                visible = isSlotVisible(config.selectButton.mappingId)
                             ) {
                                 GamepadCenterButton(config.selectButton, pressButton, releaseButton)
                             }
@@ -1080,7 +1092,8 @@ fun GamepadView(
                                 offsetY = shareOffsetY,
                                 scale = shareScale,
                                 onOffsetChange = { x, y -> shareOffsetX = x; shareOffsetY = y; saveLayoutPref("${config.id}_share_x", x); saveLayoutPref("${config.id}_share_y", y) },
-                                onScaleChange = { s -> shareScale = s; saveLayoutPref("${config.id}_share_scale", s) }
+                                onScaleChange = { s -> shareScale = s; saveLayoutPref("${config.id}_share_scale", s) },
+                                visible = isSlotVisible(config.shareButton.mappingId)
                             ) {
                                 GamepadCenterButton(config.shareButton, pressButton, releaseButton)
                             }
@@ -1090,7 +1103,8 @@ fun GamepadView(
                                 offsetY = startOffsetY,
                                 scale = startScale,
                                 onOffsetChange = { x, y -> startOffsetX = x; startOffsetY = y; saveLayoutPref("${config.id}_start_x", x); saveLayoutPref("${config.id}_start_y", y) },
-                                onScaleChange = { s -> startScale = s; saveLayoutPref("${config.id}_start_scale", s) }
+                                onScaleChange = { s -> startScale = s; saveLayoutPref("${config.id}_start_scale", s) },
+                                visible = isSlotVisible(config.startButton.mappingId)
                             ) {
                                 GamepadCenterButton(config.startButton, pressButton, releaseButton)
                             }
@@ -1119,7 +1133,8 @@ fun GamepadView(
                                 // profile's own text labels need the plain-text (Xbox-style) path.
                                 isXboxStyle = activeProfile != null,
                                 onPress = pressButton,
-                                onRelease = releaseButton
+                                onRelease = releaseButton,
+                                visibleSlots = activeProfile?.activeSlots
                             )
                         }
                         Spacer(Modifier.height(6.dp))
@@ -1131,18 +1146,14 @@ fun GamepadView(
                             onOffsetChange = { x, y -> rightStickOffsetX = x; rightStickOffsetY = y; saveLayoutPref("${config.id}_right_stick_x", x); saveLayoutPref("${config.id}_right_stick_y", y) },
                             onScaleChange = { s -> rightStickScale = s; saveLayoutPref("${config.id}_right_stick_scale", s) }
                         ) {
-                            if (activeProfile == null) {
-                                GamepadAnalogStick(
-                                    label = "R",
-                                    isClicked = (buttonMask and (1 shl 11)) != 0,
-                                    isHeld = (buttonMask and (1 shl 11)) != 0,
-                                    onMove = { x, y -> rightStickX = x; rightStickY = y; transmitGamepadState(false) },
-                                    onStickClick = { scope.launch { pressButton(11); delay(100L.milliseconds); releaseButton(11) } },
-                                    onToggleHold = { hold -> if (hold) pressButton(11) else releaseButton(11) }
-                                )
-                            } else {
-                                Spacer(Modifier.size(108.dp))
-                            }
+                            GamepadAnalogStick(
+                                label = "R",
+                                isClicked = (buttonMask and (1 shl 11)) != 0,
+                                isHeld = (buttonMask and (1 shl 11)) != 0,
+                                onMove = { x, y -> rightStickX = x; rightStickY = y; transmitGamepadState(false) },
+                                onStickClick = { scope.launch { pressButton(11); delay(100L.milliseconds); releaseButton(11) } },
+                                onToggleHold = { hold -> if (hold) pressButton(11) else releaseButton(11) }
+                            )
                         }
                     }
                 }
@@ -1530,8 +1541,11 @@ private fun FaceButtonsDiamond(
     @Suppress("UNUSED_PARAMETER") isXboxStyle: Boolean,
     onPress: (Int) -> Unit,
     onRelease: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Null shows all 4 (native mode); otherwise only face buttons a mapped profile actually binds. */
+    visibleSlots: Set<Int>? = null
 ) {
+    val isVisible = { mappingId: Int -> visibleSlots == null || visibleSlots.contains(mappingId) }
     val spacing = 40.dp
     val density = LocalDensity.current.density
 
@@ -1553,7 +1567,7 @@ private fun FaceButtonsDiamond(
             config.faceRight.mappingId to rightCenter,
             config.faceBottom.mappingId to bottomCenter,
             config.faceLeft.mappingId to leftCenter
-        )
+        ).filter { (mappingId, _) -> isVisible(mappingId) }
 
         val newlyActive = mutableSetOf<Int>()
         for (pos in pointerPositions) {
@@ -1618,10 +1632,18 @@ private fun FaceButtonsDiamond(
             },
         contentAlignment = Alignment.Center
     ) {
-        GamepadFaceButton(config.faceTop, isXboxStyle, Modifier.offset(y = -spacing), externalIsPressed = activePressedButtons.contains(config.faceTop.mappingId))
-        GamepadFaceButton(config.faceRight, isXboxStyle, Modifier.offset(x = spacing), externalIsPressed = activePressedButtons.contains(config.faceRight.mappingId))
-        GamepadFaceButton(config.faceBottom, isXboxStyle, Modifier.offset(y = spacing), externalIsPressed = activePressedButtons.contains(config.faceBottom.mappingId))
-        GamepadFaceButton(config.faceLeft, isXboxStyle, Modifier.offset(x = -spacing), externalIsPressed = activePressedButtons.contains(config.faceLeft.mappingId))
+        if (isVisible(config.faceTop.mappingId)) {
+            GamepadFaceButton(config.faceTop, isXboxStyle, Modifier.offset(y = -spacing), externalIsPressed = activePressedButtons.contains(config.faceTop.mappingId))
+        }
+        if (isVisible(config.faceRight.mappingId)) {
+            GamepadFaceButton(config.faceRight, isXboxStyle, Modifier.offset(x = spacing), externalIsPressed = activePressedButtons.contains(config.faceRight.mappingId))
+        }
+        if (isVisible(config.faceBottom.mappingId)) {
+            GamepadFaceButton(config.faceBottom, isXboxStyle, Modifier.offset(y = spacing), externalIsPressed = activePressedButtons.contains(config.faceBottom.mappingId))
+        }
+        if (isVisible(config.faceLeft.mappingId)) {
+            GamepadFaceButton(config.faceLeft, isXboxStyle, Modifier.offset(x = -spacing), externalIsPressed = activePressedButtons.contains(config.faceLeft.mappingId))
+        }
     }
 }
 
@@ -2790,8 +2812,10 @@ private fun EditableComponentWrapper(
     scale: Float,
     onOffsetChange: (Float, Float) -> Unit,
     onScaleChange: (Float) -> Unit,
+    visible: Boolean = true,
     content: @Composable () -> Unit
 ) {
+    if (!visible) return
     val density = LocalDensity.current.density
     
     val currentOffsetX by rememberUpdatedState(offsetX)
