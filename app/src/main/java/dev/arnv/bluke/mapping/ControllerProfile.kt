@@ -106,7 +106,9 @@ object ControllerPresets {
         )
     )
 
-    // FCEUX/Nestopia-style default: a subset of the SNES scheme (NES only has A/B).
+    // Verified against FCEUX's actual default (confirmed independently via its own docs and its
+    // man page: arrows for the D-pad, Z=A, X=B, Return=Start, Right Shift=Select). The previous
+    // version of this preset had A and B swapped (X=A, Z=B) - fixed here.
     val NES = ControllerProfile(
         id = "preset_nes",
         name = "NES",
@@ -120,8 +122,8 @@ object ControllerPresets {
             ControlSlot.SELECT to "SELECT", ControlSlot.START to "START"
         ),
         bindings = mapOf(
-            ControlSlot.FACE_RIGHT to key(K.KEY_X),
-            ControlSlot.FACE_BOTTOM to key(K.KEY_Z),
+            ControlSlot.FACE_RIGHT to key(K.KEY_Z),
+            ControlSlot.FACE_BOTTOM to key(K.KEY_X),
             ControlSlot.SELECT to key(K.MOD_RSHIFT),
             ControlSlot.START to key(K.KEY_ENTER),
             ControlSlot.DPAD_UP to key(K.KEY_UP),
@@ -131,8 +133,9 @@ object ControllerPresets {
         )
     )
 
-    // A common Genesis/Mega Drive keyboard layout: A/B/C on the home row, X/Y/Z (6-button
-    // extension) on the shoulder slots.
+    // Verified against BlastEm's own default.cfg (a/s/d for A/B/C, q/w/e for the 6-button X/Y/Z
+    // extension, arrows for the D-pad, Enter for Start) - a well-documented, actively maintained
+    // standalone Genesis/Mega Drive emulator.
     val GENESIS = ControllerProfile(
         id = "preset_genesis",
         name = "Genesis / Mega Drive",
@@ -163,9 +166,17 @@ object ControllerPresets {
         )
     )
 
-    // The de-facto standard MAME keyboard convention: arrows for the stick, Ctrl/Alt/Space/Shift/Z/X
-    // for the six buttons, "1" to start, "5" to insert a coin. FBNeo and GGPO's FBA both default to
-    // (or are commonly configured to match) this same layout, since it's the arcade-emulation norm.
+    // Verified against MAME's own documented default keyboard controls: arrows for the stick,
+    // Ctrl/Alt/Space/Shift/Z/X for buttons 1-6, "1" to start, "5" to insert a coin. FBNeo has no
+    // single documented factory default (it's driven by per-game/per-driver .ini presets) but
+    // commonly matches this MAME convention, so it's used here too.
+    //
+    // GGPO FBA is the odd one out: most people mean Fightcade's GGPO-based FBA client, and the
+    // one description of Fightcade's own default keyboard scheme found while checking this
+    // (WASD movement + I/O/P for punches) does NOT match MAME's layout - but that source wasn't
+    // clear on whether it's Fightcade's actual shipped default or just a common recommendation,
+    // so this preset keeps the MAME-style layout rather than switching on an unconfirmed source.
+    // Worth another look if you can confirm Fightcade's real out-of-the-box keyboard defaults.
     private val MAME_STYLE_BINDINGS = mapOf(
         ControlSlot.FACE_BOTTOM to key(K.MOD_LCTRL),
         ControlSlot.FACE_RIGHT to key(K.MOD_LALT),
