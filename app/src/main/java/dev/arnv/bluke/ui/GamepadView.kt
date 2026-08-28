@@ -454,6 +454,11 @@ fun GamepadView(
         }
     }
 
+    // Tracks every mapped slot whose key-down has been sent but not yet released, so it can be
+    // force-released (see releaseAllLiveInputs below) if whatever's sending it gets torn out of
+    // the composition - e.g. by a pad-skin or profile switch - before its own gesture ends normally.
+    val heldMappedSlots = remember { mutableStateListOf<Int>() }
+
     // Sends (or releases) one control slot's bound keyboard key when a mapped profile is active.
     // Unbound slots (a preset's buttons it doesn't use) and edit-mode drags are no-ops - the latter
     // for the same reason native mode's transmitGamepadState skips sending while isEditMode.
@@ -463,9 +468,11 @@ fun GamepadView(
             if (isPress) {
                 if (binding.modifier != 0) btManager.sendKey(binding.modifier, true)
                 btManager.sendKey(binding.keyCode, true)
+                if (!heldMappedSlots.contains(slot)) heldMappedSlots.add(slot)
             } else {
                 btManager.sendKey(binding.keyCode, false)
                 if (binding.modifier != 0) btManager.sendKey(binding.modifier, false)
+                heldMappedSlots.remove(slot)
             }
         }
     }
@@ -554,6 +561,42 @@ fun GamepadView(
         } else {
             transmitGamepadState(false)
         }
+    }
+
+    // Switching the pad skin (Xbox <-> PlayStation) swaps an if/else branch further down this
+    // composable, which tears down every button/stick/dpad on screen and rebuilds them from
+    // scratch - including any touch gesture that's mid-press, which gets cancelled without ever
+    // reaching its own release code. Switching the active profile mid-press has the same failure
+    // from the other side: sendMappedKey resolves the key to release against whichever profile is
+    // active *at release time*, not the one active when the key went down. Either way a key-down
+    // can be left stuck on the host, silently corrupting whatever gets pressed next - which is
+    // exactly the "mapping gets messed up after switching pad type/profile" symptom this fixes.
+    // Route both transitions through here first so nothing is left held.
+    val releaseAllLiveInputs = {
+        if (activeProfile != null) {
+            for (slot in heldMappedSlots.toList()) {
+                val binding = activeProfile.bindingFor(slot)
+                if (binding.isBound) {
+                    btManager.sendKey(binding.keyCode, false)
+                    if (binding.modifier != 0) btManager.sendKey(binding.modifier, false)
+                }
+            }
+            heldMappedSlots.clear()
+        } else if (buttonMask != 0 || dpadHat != BluetoothKeyboardManager.HAT_NEUTRAL ||
+            leftStickX != 0f || leftStickY != 0f || rightStickX != 0f || rightStickY != 0f
+        ) {
+            buttonMask = 0
+            dpadHat = BluetoothKeyboardManager.HAT_NEUTRAL
+            leftStickX = 0f; leftStickY = 0f; rightStickX = 0f; rightStickY = 0f
+            transmitGamepadState(true)
+        }
+        dpadPhysicalMask = 0
+        leftStickDpadMask = 0
+        rightStickDpadMask = 0
+        dpadMaskHeld = 0
+    }
+    DisposableEffect(activeProfileId, selectedIndex) {
+        onDispose { releaseAllLiveInputs() }
     }
 
     Box(
