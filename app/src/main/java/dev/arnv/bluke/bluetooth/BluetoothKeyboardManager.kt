@@ -61,7 +61,9 @@ enum class BluetoothDeviceClassMode(val prefValue: String, val displayName: Stri
     KEYBOARD_MOUSE_ONLY(
         "keyboard_mouse_only",
         "Keyboard & Mouse Only",
-        "Advertises only as a combo keyboard/pointing device, hiding the gamepad from the host entirely."
+        "Advertises only as a combo keyboard/pointing device, hiding the native gamepad from the " +
+            "host entirely. Gamepad-to-keyboard mapped profiles (Controller Mapper) still work " +
+            "fully here - they only ever send keyboard keys, never a gamepad report."
     );
 
     companion object {
