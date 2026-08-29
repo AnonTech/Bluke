@@ -396,7 +396,7 @@ class BluetoothKeyboardManager(private val context: Context) {
 
     // Persisted per device-class mode choice (see BluetoothDeviceClassMode). Stored in the same
     // "app_prefs" the Settings UI already reads/writes everything else from.
-    private var deviceClassMode: BluetoothDeviceClassMode
+    private var deviceClassModePref: BluetoothDeviceClassMode
         get() = BluetoothDeviceClassMode.fromPref(
             context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).getString("bt_device_class_mode", null)
         )
@@ -406,7 +406,7 @@ class BluetoothKeyboardManager(private val context: Context) {
             }
         }
 
-    fun getDeviceClassMode(): BluetoothDeviceClassMode = deviceClassMode
+    fun getDeviceClassMode(): BluetoothDeviceClassMode = deviceClassModePref
 
     /** Applies a new [BluetoothDeviceClassMode] and restarts the HID service so the new Bluetooth
      *  Class-of-Device and SDP subclass actually get (re-)advertised. Re-registering the HID app
@@ -414,8 +414,8 @@ class BluetoothKeyboardManager(private val context: Context) {
      *  any current connection while it does - callers should warn the user before switching while
      *  connected. */
     fun setDeviceClassMode(mode: BluetoothDeviceClassMode) {
-        if (deviceClassMode == mode) return
-        deviceClassMode = mode
+        if (deviceClassModePref == mode) return
+        deviceClassModePref = mode
         restartHidService()
     }
 
@@ -425,7 +425,7 @@ class BluetoothKeyboardManager(private val context: Context) {
                 "Bluke",                         // Name
                 "Wireless Controller Combo",    // Description
                 "Bluke",                         // Provider
-                minorDeviceClassByte(deviceClassMode).toByte(), // Subclass, per the active device-class mode
+                minorDeviceClassByte(deviceClassModePref).toByte(), // Subclass, per the active device-class mode
                 hidDescriptor                    // Descriptor
             )
         } catch (e: Throwable) {
@@ -841,7 +841,7 @@ class BluetoothKeyboardManager(private val context: Context) {
                 // regardless of what buildSdpSettings() declared, silently overwriting any gamepad
                 // category the SDP subclass had set. Compute it from the same per-mode value so
                 // both fields agree: 0x000500 is Major Device Class "Peripheral".
-                spoofLocalDeviceClass(bluetoothAdapter, 0x000500 or minorDeviceClassByte(deviceClassMode))
+                spoofLocalDeviceClass(bluetoothAdapter, 0x000500 or minorDeviceClassByte(deviceClassModePref))
                 updateBondedDevices()
                 val connectedDevs = hidDeviceProfile?.connectedDevices
                 val activeDev = connectedDevs?.firstOrNull()
