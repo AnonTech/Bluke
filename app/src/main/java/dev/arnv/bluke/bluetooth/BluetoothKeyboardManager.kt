@@ -42,6 +42,34 @@ sealed class BluetoothState {
     data class Connected(val deviceName: String) : BluetoothState()
 }
 
+/** What this device advertises itself as over Bluetooth (Class-of-Device + HID SDP subclass) -
+ *  independent of which on-screen mode (keyboard/trackpad/gamepad) is currently active. A host
+ *  decides whether to treat the connection as a game controller partly from this, not just from
+ *  the HID report descriptor, so some hosts/emulators work better when it isn't declared as a
+ *  combo device. Changing it requires re-registering the HID app, which drops any live connection. */
+enum class BluetoothDeviceClassMode(val prefValue: String, val displayName: String, val description: String) {
+    BOTH(
+        "both",
+        "Keyboard, Mouse & Gamepad",
+        "Advertises as a combo keyboard/pointing device that's also a gamepad. Works for most hosts."
+    ),
+    GAMEPAD_ONLY(
+        "gamepad_only",
+        "Gamepad Only",
+        "Advertises only as a gamepad. Try this if a game or emulator won't see it as a controller."
+    ),
+    KEYBOARD_MOUSE_ONLY(
+        "keyboard_mouse_only",
+        "Keyboard & Mouse Only",
+        "Advertises only as a combo keyboard/pointing device, hiding the gamepad from the host entirely."
+    );
+
+    companion object {
+        val DEFAULT = BOTH
+        fun fromPref(value: String?): BluetoothDeviceClassMode = entries.firstOrNull { it.prefValue == value } ?: DEFAULT
+    }
+}
+
 class BluetoothKeyboardManager(private val context: Context) {
 
     companion object {
@@ -349,22 +377,53 @@ class BluetoothKeyboardManager(private val context: Context) {
     )
 
     // Bluetooth's Class-of-Device minor-device-class byte packs two independent fields for the
-    // Peripheral major class: bits 7-6 are the keyboard/pointing flags (SUBCLASS1_*) and bits 5-2
-    // are a separate device-category (SUBCLASS2_*, e.g. joystick/gamepad/remote). They're meant to
-    // be OR'd together - SUBCLASS1_COMBO alone told hosts (macOS included) this is a combo
-    // keyboard+mouse with an "uncategorized" second field, never mentioning a gamepad, which is
-    // one reason a host's Bluetooth stack may not treat the connected accessory as a controller at
-    // all even though report ID 3 in the descriptor below is a fully valid HID gamepad.
-    private val hidSubclass: Byte =
-        (BluetoothHidDevice.SUBCLASS1_COMBO.toInt() or BluetoothHidDevice.SUBCLASS2_GAMEPAD.toInt()).toByte()
+    // Peripheral major class: bits 7-6 are the keyboard/pointing flags (0x00 none, 0x40 keyboard,
+    // 0x80 pointing, 0xC0 combo - these are already bit-aligned, matching SUBCLASS1_*) and bits
+    // 5-2 are a separate 4-bit device-category (0000 uncategorized, 0010 gamepad, ... - SUBCLASS2_*
+    // constants are the *unshifted* category value and need <<2 to land in this field without
+    // colliding with the reserved format-type bits 1-0, which must stay 0). Declaring only the
+    // keyboard/pointing flags - this app's behavior until now - leaves the category permanently
+    // "uncategorized", which is one reason a host's Bluetooth stack may never treat the connected
+    // accessory as a game controller, independent of anything in the HID report descriptor above.
+    private fun minorDeviceClassByte(mode: BluetoothDeviceClassMode): Int {
+        val keyboardPointingFlags = if (mode == BluetoothDeviceClassMode.GAMEPAD_ONLY) 0x00 else 0xC0
+        val gamepadCategory = 0x02 shl 2 // SUBCLASS2_GAMEPAD, shifted into bits 5-2
+        val category = if (mode == BluetoothDeviceClassMode.KEYBOARD_MOUSE_ONLY) 0x00 else gamepadCategory
+        return keyboardPointingFlags or category
+    }
 
-    private val sdpSettings: BluetoothHidDeviceAppSdpSettings? by lazy {
-        try {
+    // Persisted per device-class mode choice (see BluetoothDeviceClassMode). Stored in the same
+    // "app_prefs" the Settings UI already reads/writes everything else from.
+    private var deviceClassMode: BluetoothDeviceClassMode
+        get() = BluetoothDeviceClassMode.fromPref(
+            context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).getString("bt_device_class_mode", null)
+        )
+        set(value) {
+            context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).edit {
+                putString("bt_device_class_mode", value.prefValue)
+            }
+        }
+
+    fun getDeviceClassMode(): BluetoothDeviceClassMode = deviceClassMode
+
+    /** Applies a new [BluetoothDeviceClassMode] and restarts the HID service so the new Bluetooth
+     *  Class-of-Device and SDP subclass actually get (re-)advertised. Re-registering the HID app
+     *  is the only way a connected host ever sees a changed device class, and it necessarily drops
+     *  any current connection while it does - callers should warn the user before switching while
+     *  connected. */
+    fun setDeviceClassMode(mode: BluetoothDeviceClassMode) {
+        if (deviceClassMode == mode) return
+        deviceClassMode = mode
+        restartHidService()
+    }
+
+    private fun buildSdpSettings(): BluetoothHidDeviceAppSdpSettings? {
+        return try {
             BluetoothHidDeviceAppSdpSettings(
                 "Bluke",                         // Name
                 "Wireless Controller Combo",    // Description
                 "Bluke",                         // Provider
-                hidSubclass,                      // Subclass: combo keyboard+pointing AND gamepad
+                minorDeviceClassByte(deviceClassMode).toByte(), // Subclass, per the active device-class mode
                 hidDescriptor                    // Descriptor
             )
         } catch (e: Throwable) {
@@ -774,7 +833,13 @@ class BluetoothKeyboardManager(private val context: Context) {
             appRegistrationState.value = registered
             isRegisteringInProcess = false
             if (registered) {
-                spoofLocalDeviceClass(bluetoothAdapter, 0x000005C0) // Spoof Class of Device to Combo Peripheral (Keyboard/Mouse)
+                // The local radio's broadcast Class-of-Device is what a scanning/pairing host
+                // actually sees - it's set here, separately from (and after) the HID SDP record's
+                // own subclass field, and previously always hardcoded to "combo, uncategorized"
+                // regardless of what buildSdpSettings() declared, silently overwriting any gamepad
+                // category the SDP subclass had set. Compute it from the same per-mode value so
+                // both fields agree: 0x000500 is Major Device Class "Peripheral".
+                spoofLocalDeviceClass(bluetoothAdapter, 0x000500 or minorDeviceClassByte(deviceClassMode))
                 updateBondedDevices()
                 val connectedDevs = hidDeviceProfile?.connectedDevices
                 val activeDev = connectedDevs?.firstOrNull()
@@ -934,7 +999,7 @@ class BluetoothKeyboardManager(private val context: Context) {
                     Log.e("BluetoothKeyboard", "Error during unregister", e)
                 }
                 
-                val settings = sdpSettings
+                val settings = buildSdpSettings()
                 if (settings == null) {
                     _statusMessage.value = "Bluetooth HID Device role is not supported on this device."
                     _serviceState.value = BluetoothState.ProfileNotSupported
@@ -989,7 +1054,7 @@ class BluetoothKeyboardManager(private val context: Context) {
                 Log.e("BluetoothKeyboard", "Error during unregister", e)
             }
             try {
-                hid.registerApp(sdpSettings, null, null, executor, hidCallback)
+                hid.registerApp(buildSdpSettings(), null, null, executor, hidCallback)
             } catch (e: Exception) {
                 Log.e("BluetoothKeyboard", "Error during registerApp in restart", e)
             }
